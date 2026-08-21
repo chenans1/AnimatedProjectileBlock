@@ -18,7 +18,9 @@
         "VCPKG_TARGET_TRIPLET": "x64-windows-static",
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>",
 
-        "COMMONLIBSSE_PATH": "C:/SKSEdev/CommonlibNG"
+        "COMMONLIBSSE_PATH": "C:/SKSEdev/CommonlibNG",
+
+        "SKSE_EXTERN_PATH": "C:/SKSEdev/extern"
       }
     },
     {

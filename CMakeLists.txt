@@ -43,6 +43,15 @@ target_precompile_headers(
     PRIVATE PCH.h
 )
 
+#extern stuff for skse menuframework/csimpleini etc. 
+if(DEFINED SKSE_EXTERN_PATH)
+    target_include_directories(
+        ${PROJECT_NAME}
+        PRIVATE
+            "${SKSE_EXTERN_PATH}"
+    )
+endif()
+
 # When your SKSE .dll is compiled, this will automatically copy the .dll into your mods folder.
 # Only works if you configure DEPLOY_ROOT above (or set the SKYRIM_MODS_FOLDER environment variable)
 if(DEFINED OUTPUT_FOLDER)
