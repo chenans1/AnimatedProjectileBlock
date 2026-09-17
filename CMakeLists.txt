@@ -3,7 +3,7 @@
 cmake_minimum_required (VERSION 3.19)
 
 # Set your project name. This will be the name of your SKSE .dll file.
-project(PLUGINNAME VERSION 0.0.1 LANGUAGES CXX)
+project(AnimatedProjectileBlock VERSION 0.0.1 LANGUAGES CXX)
 
 set(OUTPUT_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}/output")
 
@@ -24,8 +24,9 @@ include("${COMMONLIBSSE_PATH}/cmake/CommonLibSSE.cmake")
 
 # Plugin Sources
 set(SOURCES
-    PCH.h
-    plugin.cpp
+    src/PCH.h
+    src/plugin.cpp
+    src/hooks.h
 )
 
 add_commonlibsse_plugin(
@@ -40,7 +41,7 @@ target_compile_features(
 
 target_precompile_headers(
     ${PROJECT_NAME}
-    PRIVATE PCH.h
+    PRIVATE src/PCH.h
 )
 
 #extern stuff for skse menuframework/csimpleini etc. 
