@@ -4,7 +4,7 @@ class hooks {
     //logic adapted from valhalla combat, hooks adapted from arrowInterpreter. 
     public: 
         static inline void install() {
-            SKSE::log::info("[hooks] attempting hooking projectile collision functions");
+            SKSE::log::info("[hooks] attempting hooking projectile addimpact functions");
 
             {
                 REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_ArrowProjectile[0]};
@@ -16,7 +16,12 @@ class hooks {
                 _originalMissile = vtable.write_vfunc(0xBD, AddImpactMissile);
             }
 
-            SKSE::log::info("[hooks] attempting hooking projectile collision functions");
+            {
+                REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_BeamProjectile[0]};
+                _originalBeam = vtable.write_vfunc(0xBD, AddImpactBeam);
+            }
+
+            SKSE::log::info("[hooks] attempting hooking projectile addimpact functions");
         }
     
     private: 
@@ -29,7 +34,6 @@ class hooks {
                 SKSE::log::info("[hooks] angle: {}/{}", angle, fCombatHitConeAngle);
                 return (angle <= fCombatHitConeAngle);
             }
-            
             return false;
         }
 
@@ -55,19 +59,26 @@ class hooks {
             }
         }
 
-        //should natively support all projectile types if I hook this
+        //need to hook specific vtable funcs, hooking the base vfunc doesnt work.
         static RE::Projectile::ImpactData* AddImpactProj(RE::ArrowProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
             // SKSE::log::info("[AddImpactProj]");
             processProjectileCollision(a_projectile, a_ref);
             return _originalArrow(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
         }
-        
+
         static RE::Projectile::ImpactData* AddImpactMissile(RE::ArrowProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
             // SKSE::log::info("[AddImpactMissile]");
             processProjectileCollision(a_projectile, a_ref);
             return _originalMissile(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
         }
         
+        static RE::Projectile::ImpactData* AddImpactBeam(RE::ArrowProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
+            // SKSE::log::info("[AddImpactBeam]");
+            processProjectileCollision(a_projectile, a_ref);
+            return _originalBeam(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
+        }
+
         static inline REL::Relocation<decltype(AddImpactProj)> _originalArrow;
         static inline REL::Relocation<decltype(AddImpactMissile)> _originalMissile;
+        static inline REL::Relocation<decltype(AddImpactBeam)> _originalBeam;
 };
