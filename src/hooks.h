@@ -25,17 +25,30 @@ class hooks {
         }
     
     private: 
+        //gonna do this via velocity check instead, I think. Using dot product to check for projectile heading to calculate if it's
+        //within the block angle cone. 
         static bool checkBlockAngle(RE::Actor* actor, RE::Projectile* projectile) {
-            auto angle = actor->GetHeadingAngle(projectile->GetAngle(), true);
             auto* gameSettings = RE::GameSettingCollection::GetSingleton();
             auto* gmst = gameSettings ? gameSettings->GetSetting("fCombatHitConeAngle") : nullptr;
             if (gmst) {
                 const float fCombatHitConeAngle = gmst->GetFloat();
-                SKSE::log::info("[hooks] angle: {}/{}", angle, fCombatHitConeAngle);
-                return (angle <= fCombatHitConeAngle);
+                const auto& v = projectile->GetProjectileRuntimeData().velocity;
+                const float horizontalSpeed = std::hypot(v.x, v.y);
+                if (horizontalSpeed < 0.0001f) {
+                    SKSE::log::info("[checkBlockAngle]: negligeble horizontal speed: {}", horizontalSpeed);
+                    return false;
+                }
+                
+                const float blockerAngle = actor->GetAngleZ();
+                const float forwardX = std::sin(blockerAngle);
+                const float forwardY = std::cos(blockerAngle);
+                const float dotProduct = forwardX * (-v.x / horizontalSpeed) + forwardY * (-v.y / horizontalSpeed);
+                SKSE::log::info("[checkBlockAngle] angle: {}/{}", std::acos(std::clamp(dotProduct, -1.0f, 1.0f)) * 180.0f/3.1415927f, fCombatHitConeAngle);
+                return dotProduct >= std::cos(fCombatHitConeAngle * 3.1415927f/180.0f);
             }
             return false;
         }
+
 
         static void performProjectileBlock(RE::Actor* blocker, RE::Projectile* projectile) {
             if (!blocker || !projectile) {
