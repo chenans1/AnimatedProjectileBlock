@@ -46,9 +46,17 @@ class hooks {
         }
         
     private: 
-        //cooldown mgef trick
-        static inline bool applyCD(RE::Actor* actor) {
+        //cooldown to not excessively make actors play blockhit animations
+        static bool applyCD(RE::Actor* actor) {
             if (!actor || !cooldownSpell || !cooldownEffect) {
+                return false;
+            }
+            auto* magicTarget = actor->GetMagicTarget();
+            if (!magicTarget) {
+                return false;
+            }
+
+            if (magicTarget->HasMagicEffect(cooldownEffect)) {
                 return false;
             }
 
@@ -56,11 +64,11 @@ class hooks {
                 // SKSE::log::info("[EnchantCooldown] applying cooldown spell");
                 caster->CastSpellImmediate(cooldownSpell, true, actor, 1.0f, false, 0.0f, actor);
                 return true;
-            }
 
+            }
             return false;
         }
-
+        
         //gonna do this via velocity check instead, I think. Using dot product to check for projectile heading to calculate if it's
         //within the block angle cone. 
         static bool checkBlockAngle(RE::Actor* actor, RE::Projectile* projectile) {
@@ -72,12 +80,8 @@ class hooks {
                 const float fCombatHitConeAngle = gmst->GetFloat();
                 if (projectile->formType == RE::FormType::ProjectileFlame) {
                     //flame projs have no velocity. I'm going to check for the actual beam heading instead.
-                    if (!applyCD(actor)) {
-                        SKSE::log::info("[checkBlockAngle]: flame projectile blocker has CD effect");
-                        return false;
-                    }
                     const float heading = projectile->GetAngleZ();
-                    SKSE::log::info("[checkBlockAngle]: flame projectile heading: {}", heading);
+                    // SKSE::log::info("[checkBlockAngle]: flame projectile heading: {}", heading);
                     projX = std::sin(heading);
                     projY = std::cos(heading);
                 } else {
@@ -101,17 +105,23 @@ class hooks {
             return false;
         }
 
-
         static void performProjectileBlock(RE::Actor* blocker, RE::Projectile* projectile) {
             if (!blocker || !projectile) {
                 return;
             }
-            if (!checkBlockAngle(blocker, projectile)) {
+
+            if (!checkBlockAngle(blocker, projectile) || !blocker->IsBlocking()) {
                 return;
             }
-            if (blocker->IsBlocking()) {
-                blocker->NotifyAnimationGraph("BlockHitStart");
+
+            if (projectile->formType == RE::FormType::ProjectileFlame) {
+                if (!applyCD(blocker)) {
+                    // SKSE::log::info("[performProjectileBlock]: flame projectile blocker has CD effect");
+                    return; 
+                }
             }
+            blocker->NotifyAnimationGraph("BlockHitStart");
+            
         }
 
         static void processProjectileCollision(RE::Projectile* a_projectile, RE::TESObjectREFR* a_ref) { 
