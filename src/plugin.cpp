@@ -47,6 +47,13 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     log::info("{} {} is loading...", plugin->GetName(), version);
     SKSE::Init(skse);
     hooks::install();
+    SKSE::GetMessagingInterface()->RegisterListener([](SKSE::MessagingInterface::Message* msg) {
+        switch (msg->type) {
+            case SKSE::MessagingInterface::kDataLoaded:
+                hooks::LoadForms();
+                break;
+            }
+    });
     log::info("{} has finished loading.", plugin->GetName());
     return true;
 }
