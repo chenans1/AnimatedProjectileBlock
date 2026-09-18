@@ -6,6 +6,8 @@ namespace settings {
 
         bool playerWeaponArrowEnabled = true;
         bool playerShieldArrowEnabled = true;
+        bool playerWeaponArrowDamageReductionEnabled = true;
+        bool playerShieldArrowDamageReductionEnabled = true;
         bool playerWeaponMagicEnabled = true;
         bool playerShieldMagicEnabled = true;
         bool playerWeaponSpellDamageReductionEnabled = true;
@@ -13,6 +15,8 @@ namespace settings {
 
         bool NPCWeaponArrowEnabled = true;
         bool NPCShieldArrowEnabled = true;
+        bool NPCWeaponArrowDamageReductionEnabled = true;
+        bool NPCShieldArrowDamageReductionEnabled = true;
         bool NPCWeaponMagicEnabled = true;
         bool NPCShieldMagicEnabled = true;
         bool NPCWeaponSpellDamageReductionEnabled = true;
@@ -56,4 +60,5 @@ namespace settings {
     void RegisterMenu();
     void __stdcall RenderMenuPage();
     void __stdcall RenderCostsPage();
+    void __stdcall RenderAnimationPage();
 }

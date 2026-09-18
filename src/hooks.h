@@ -111,6 +111,14 @@ class hooks {
             return profile.shield ? cfg.NPCShieldSpellDamageReductionEnabled : cfg.NPCWeaponSpellDamageReductionEnabled;
         }
 
+        static bool arrowDamageReductionEnabled(RE::Actor* actor, const BlockProfile& profile, const settings::config& cfg) {
+            const bool player = actor == RE::PlayerCharacter::GetSingleton();
+            if (player) {
+                return profile.shield ? cfg.playerShieldArrowDamageReductionEnabled : cfg.playerWeaponArrowDamageReductionEnabled;
+            }
+            return profile.shield ? cfg.NPCShieldArrowDamageReductionEnabled : cfg.NPCWeaponArrowDamageReductionEnabled;
+        }
+
         static float blockSetting(const char* name, float fallback) {
             auto* collection = RE::GameSettingCollection::GetSingleton();
             auto* setting = collection ? collection->GetSetting(name) : nullptr;
@@ -270,6 +278,10 @@ class hooks {
                 const auto cfg = settings::Get();
                 const auto profile = getBlockProfile(actor, false, cfg);
                 if (!profile.enabled || !actor->IsBlocking() || !checkBlockAngle(actor, a_projectile)) {
+                    return;
+                }
+                if (!arrowDamageReductionEnabled(actor, profile, cfg)) {
+                    actor->NotifyAnimationGraph("BlockHitStart");
                     return;
                 }
                 const float reduction = blockedFraction(actor, profile);
