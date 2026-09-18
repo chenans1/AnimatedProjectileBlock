@@ -17,8 +17,8 @@ class hooks {
             SKSE::log::info("[hooks] attempting hooking projectile ApplyProjectileSpell");
 
             auto& trampoline = SKSE::GetTrampoline();
-            // originalApply = trampoline.write_call<5>(REL::RelocationID(42943, 44123).address() + REL::Relocate(0x31C, 0x312), ApplyProjectileSpell);
-            // originalApply = trampoline.write_call<5>(REL::Relocation<std::uintptr_t>{ REL::Offset(0x7EC608) }.address(), ApplyProjectileSpell);
+            // originalApply = trampoline.write_call<5>(REL::RelocationID(42943, 44123).address() + REL::Relocate(0x31C, 0x312), ApplyProjectileSpell); probably fired off for arrow enchantments
+            // originalApply = trampoline.write_call<5>(REL::Relocation<std::uintptr_t>{ REL::Offset(0x7EC608) }.address(), ApplyProjectileSpell); hard coded ae address of working call 
             originalApply = trampoline.write_call<5>(REL::RelocationID(43015, 44206).address() + REL::Relocate(0x216, 0x218), ApplyProjectileSpell);
             SKSE::log::info("[Hooks] originalApply at address: 0x{:X}", originalApply.address());
             // projectileHooksInstalled = true;
@@ -34,10 +34,6 @@ class hooks {
                 RELOCATION_ID(33763, 34547), REL::VariantOffset(0x4A3, 0x656, 0x427)
             };
             const auto callSite = checkAddEffect.address();
-            if (*reinterpret_cast<const std::uint8_t*>(callSite) != 0xE8) {
-                SKSE::log::error("[hooks] CheckAddEffect site 0x{:X} is not a 5-byte CALL", callSite);
-                return;
-            }
 
             originalSetEffectiveness = SKSE::GetTrampoline().write_call<5>(callSite, SetEffectiveness);
             SKSE::log::info("[hooks] SetEffectiveness installed at 0x{:X}; previous target 0x{:X}",
@@ -57,8 +53,8 @@ class hooks {
             SKSE::log::info("Sucessfully loaded enchant cd forms: spell={}, effect={}", static_cast<void*>(cooldownSpell), static_cast<void*>(cooldownEffect));
             return true;
         }
-        
-    private: 
+
+    private:
         struct Hit {
             RE::ObjectRefHandle target;
             RE::MagicItem* spell;
