@@ -90,7 +90,7 @@ class hooks {
                 currentHit = std::move(previous);
             }
         };
-        
+
         static inline thread_local std::optional<Hit> currentHit;
 
         //cooldown to not excessively make actors play blockhit animations
@@ -191,28 +191,7 @@ class hooks {
             return _originalArrow(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
         }
 
-        // static RE::Projectile::ImpactData* AddImpactMissile(RE::MissileProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
-        //     // SKSE::log::info("[AddImpactMissile]");
-        //     processProjectileCollision(a_projectile, a_ref);
-        //     return _originalMissile(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
-        // }
-        
-        // static RE::Projectile::ImpactData* AddImpactBeam(RE::BeamProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
-        //     // SKSE::log::info("[AddImpactBeam]");
-        //     processProjectileCollision(a_projectile, a_ref);
-        //     return _originalBeam(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
-        // }
-
-        // static RE::Projectile::ImpactData* AddImpactFlame(RE::FlameProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
-        //     // SKSE::log::info("[AddImpactFlame]");
-        //     processProjectileCollision(a_projectile, a_ref);
-        //     return _originalFlame(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
-        // }
-
         static inline REL::Relocation<decltype(AddImpactProj)> _originalArrow;
-        // static inline REL::Relocation<decltype(AddImpactMissile)> _originalMissile;
-        // static inline REL::Relocation<decltype(AddImpactBeam)> _originalBeam;
-        // static inline REL::Relocation<decltype(AddImpactFlame)> _originalFlame;
 
         static inline RE::SpellItem* cooldownSpell = nullptr;       // 0x800
         static inline RE::EffectSetting* cooldownEffect = nullptr;  // 0x801
@@ -220,7 +199,6 @@ class hooks {
         //it turns out this function - which applies the spell effects from projectile collision - actually runs before the addimpact() hooks
         //it also turns out in the same synchronous call, setEffectiveness is called. 
         static void ApplyProjectileSpell(RE::MagicCaster* caster, const RE::NiPoint3* impactPos, RE::Projectile* projectile, RE::TESObjectREFR* target, float arg5, float arg6, std::uint8_t arg7, std::uint8_t arg8) {
-            // HitScope scope(TakeHit(projectile, target));
             // SKSE::log::info("[ApplyProjectileSpell] ENTER: projectile={} target={} blocked={}", static_cast<void*>(projectile), static_cast<void*>(target), currentHit.has_value());
             std::optional<Hit> hit;
             if (projectile && target) {
@@ -233,7 +211,6 @@ class hooks {
                                 spell,
                                 0.0f
                             };
-
                             if (projectile->formType == RE::FormType::ProjectileFlame) {
                                 if (applyCD(actor)) {
                                     actor->NotifyAnimationGraph("BlockHitStart");
@@ -251,11 +228,11 @@ class hooks {
         }
 
         static void SetEffectiveness(RE::ActiveEffect* effect, float power, bool onlyHostile) {
-            static std::atomic<std::uint32_t> sampledCalls{0};
-            if (sampledCalls.fetch_add(1, std::memory_order_relaxed) < 8) {
-                SKSE::log::info("[SetEffectiveness] entered effect={} power={} blockedContext={}",
-                    static_cast<void*>(effect), power, currentHit.has_value());
-            }
+            // static std::atomic<std::uint32_t> sampledCalls{0};
+            // if (sampledCalls.fetch_add(1, std::memory_order_relaxed) < 8) {
+            //     SKSE::log::info("[SetEffectiveness] entered effect={} power={} blockedContext={}",
+            //         static_cast<void*>(effect), power, currentHit.has_value());
+            // }
             originalSetEffectiveness(effect, power, onlyHostile);
             if (!currentHit || !effect) {
                 // SKSE::log::info("[SetEffectiveness] No currentHit");
@@ -266,20 +243,28 @@ class hooks {
                 SKSE::log::info("[SetEffectiveness] effect spell: {} is not currenthit spell: {}", static_cast<void*>(effect->spell), static_cast<void*>(currentHit->spell));
                 return;
             }
-            // if (!effect->IsCausingHealthDamage()) {
-            //     return;
-            // }
-            //do not reduce damage for targets that aren't blocking
-            // auto* victim = effect->GetTargetActor();
-            // if (!victim) {
-            //     SKSE::log::info("[SetEffectiveness] no victim");
-            //     return;
-            // }
-            // const auto victimHandle = victim->GetHandle();
-            // if (victimHandle != currentHit->target) {
-            //     SKSE::log::info("[SetEffectiveness] victim mismatch: victim={} currentHit={}", victimHandle.native_handle(), currentHit->target.native_handle());
-            //     return;
-            // }
+            //only affect damage to H/M/S
+            const auto* baseEffect = effect->GetBaseObject();
+            constexpr auto isVitalActorValue = [](RE::ActorValue value) {
+                return value == RE::ActorValue::kHealth || value == RE::ActorValue::kStamina || value == RE::ActorValue::kMagicka;
+            };
+            const bool damageHMS = effect->IsCausingHealthDamage() || (baseEffect && baseEffect->IsDetrimental() && (isVitalActorValue(baseEffect->data.primaryAV) || isVitalActorValue(baseEffect->data.secondaryAV)));
+            if (!damageHMS) {
+                SKSE::log::info("[SetEffectiveness] effect does not damage Health, Stamina or Magicka");
+                return;
+            }
+            // MagicTarget is a secondary base of Actor. Ask it for the owning
+            // reference instead of reinterpreting its address as an Actor*.
+            auto* victimRef = effect->target ? effect->target->GetTargetStatsObject() : nullptr;
+            if (!victimRef || !victimRef->As<RE::Actor>()) {
+                SKSE::log::info("[SetEffectiveness]: unusable victimref");
+                return;
+            }
+            const auto victimHandle = victimRef->GetHandle();
+            if (victimHandle != currentHit->target) {
+                SKSE::log::info("[SetEffectiveness] target mismatch: effect target {:08X} (handle {:08X}), impact handle {:08X}", victimRef->GetFormID(), victimHandle.native_handle(), currentHit->target.native_handle());
+                return;
+            }
             const float oldMagnitude = effect->magnitude;
             effect->magnitude *= currentHit->remainingDamage;
             SKSE::log::info("[SetEffectiveness] blocked spell effect={} magnitude {} -> {}", static_cast<void*>(effect), oldMagnitude, effect->magnitude);
