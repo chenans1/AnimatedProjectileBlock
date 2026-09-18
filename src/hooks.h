@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include "settings.h"
 
 class hooks {
     //logic adapted from valhalla combat, hooks adapted from arrowInterpreter. 
@@ -19,7 +20,8 @@ class hooks {
 
             auto& trampoline = SKSE::GetTrampoline();
             // originalApply = trampoline.write_call<5>(REL::RelocationID(42943, 44123).address() + REL::Relocate(0x31C, 0x312), ApplyProjectileSpell);
-            originalApply = trampoline.write_call<5>(REL::Relocation<std::uintptr_t>{ REL::Offset(0x7EC608) }.address(), ApplyProjectileSpell);
+            // originalApply = trampoline.write_call<5>(REL::Relocation<std::uintptr_t>{ REL::Offset(0x7EC608) }.address(), ApplyProjectileSpell);
+            originalApply = trampoline.write_call<5>(REL::RelocationID(43015, 44206).address() + REL::Relocate(0x216, 0x218), ApplyProjectileSpell);
             SKSE::log::info("[Hooks] originalApply at address: 0x{:X}", originalApply.address());
             // projectileHooksInstalled = true;
             SKSE::log::info("[hooks] Finished hooks");
@@ -78,6 +80,45 @@ class hooks {
 
         static inline thread_local std::optional<Hit> currentHit;
 
+        struct BlockProfile {
+            bool enabled;
+            float factor;
+            bool shield;
+        };
+
+        static BlockProfile getBlockProfile(RE::Actor* actor, bool spell, const settings::config& cfg) {
+            const bool shield = actor->GetWornArmor(RE::BGSBipedObjectForm::BipedObjectSlot::kShield) != nullptr;
+            const bool player = actor == RE::PlayerCharacter::GetSingleton();
+            if (player) {
+                if (spell) {
+                    return shield ? BlockProfile{cfg.playerShieldMagicEnabled, cfg.pcShieldMagicFactor, true}
+                                  : BlockProfile{cfg.playerWeaponMagicEnabled, cfg.pcWeaponMagicFactor, false};
+                }
+                return shield ? BlockProfile{cfg.playerShieldArrowEnabled, cfg.pcShieldArrowFactor, true}
+                              : BlockProfile{cfg.playerWeaponArrowEnabled, cfg.pcWeaponArrowFactor, false};
+            }
+            if (spell) {
+                return shield ? BlockProfile{cfg.NPCShieldMagicEnabled, cfg.NPCShieldMagicFactor, true}
+                              : BlockProfile{cfg.NPCWeaponMagicEnabled, cfg.NPCWeaponMagicFactor, false};
+            }
+            return shield ? BlockProfile{cfg.NPCShieldArrowEnabled, cfg.NPCShieldArrowFactor, true}
+                          : BlockProfile{cfg.NPCWeaponArrowEnabled, cfg.NPCWeaponArrowFactor, false};
+        }
+
+        static float blockSetting(const char* name, float fallback) {
+            auto* collection = RE::GameSettingCollection::GetSingleton();
+            auto* setting = collection ? collection->GetSetting(name) : nullptr;
+            return setting && setting->GetType() == RE::Setting::Type::kFloat ? setting->GetFloat() : fallback;
+        }
+
+        static float blockedFraction(RE::Actor* actor, const BlockProfile& profile) {
+            // The GMST supplies the starting block value. Perks then modify that value via the same entry point used by the game's block calculation.
+            float block = profile.shield ? blockSetting("fShieldBaseFactor", 0.45f) : blockSetting("fBlockWeaponBase", 0.30f);
+            RE::BGSEntryPoint::HandleEntryPoint(RE::BGSEntryPoint::ENTRY_POINT::kModPercentBlocked, actor, &block);
+            const float cap = std::clamp(blockSetting("fBlockMax", 0.70f), 0.0f, 1.0f);
+            return std::clamp(block, 0.0f, cap) * std::clamp(profile.factor, 0.0f, 1.0f);
+        }
+
         //cooldown to not excessively make actors play blockhit animations
         static bool applyCD(RE::Actor* actor) {
             if (!actor || !cooldownSpell || !cooldownEffect) {
@@ -125,7 +166,9 @@ class hooks {
                 
                 const float horizontalSpeed = std::hypot(projX, projY);
                 if (horizontalSpeed < 0.0001f) {
-                    SKSE::log::info("[checkBlockAngle]: negligeble horizontal speed: {}", horizontalSpeed);
+                    if (settings::Get().log) {
+                        SKSE::log::info("[checkBlockAngle]: negligible horizontal speed: {}", horizontalSpeed);
+                    }
                     return false;
                 }
                 
@@ -137,11 +180,14 @@ class hooks {
             return false;
         }
 
-        static bool performProjectileBlock(RE::Actor* blocker, RE::Projectile* projectile) {
+        static bool performProjectileBlock(RE::Actor* blocker, RE::Projectile* projectile, const settings::config& cfg) {
             if (!blocker || !projectile) {
                 return false;
             }
 
+            if (!getBlockProfile(blocker, false, cfg).enabled) {
+                return false;
+            }
             if (!checkBlockAngle(blocker, projectile) || !blocker->IsBlocking()) {
                 return false;
             }
@@ -162,10 +208,16 @@ class hooks {
             }
             if (a_ref->formType == RE::FormType::ActorCharacter) {
                 auto* actor = a_ref->As<RE::Actor>();
-                if (performProjectileBlock(actor, a_projectile)) {    
-                    SKSE::log::info("[processProjectileCollision] recorded blocked projectile={}, target={}", static_cast<void*>(a_projectile), static_cast<void*>(a_ref));
+                const auto cfg = settings::Get();
+                if (performProjectileBlock(actor, a_projectile, cfg)) {
+                    const auto profile = getBlockProfile(actor, false, cfg);
                     auto& rd = a_projectile->GetProjectileRuntimeData();
-                    rd.weaponDamage = 0;
+                    const float reduction = blockedFraction(actor, profile);
+                    rd.weaponDamage *= 1.0f - reduction;
+                    if (cfg.log) {
+                        SKSE::log::info("[processProjectileCollision] projectile={} target={} reduction={} remainingWeaponDamage={}",
+                            static_cast<void*>(a_projectile), static_cast<void*>(a_ref), reduction, rd.weaponDamage);
+                    }
                 }
             }
         }
@@ -190,12 +242,14 @@ class hooks {
             if (projectile && target) {
                 if (auto* actor = target->As<RE::Actor>()) {
                     if (actor->IsBlocking() && checkBlockAngle(actor, projectile)) {
+                        const auto cfg = settings::Get();
+                        const auto profile = getBlockProfile(actor, true, cfg);
                         auto* spell = projectile->GetProjectileRuntimeData().spell;
-                        if (spell) {
+                        if (spell && profile.enabled) {
                             hit = Hit{
                                 target->GetHandle(),
                                 spell,
-                                0.0f
+                                1.0f - blockedFraction(actor, profile)
                             };
                             if (projectile->formType == RE::FormType::ProjectileFlame) {
                                 if (applyCD(actor)) {
@@ -214,11 +268,6 @@ class hooks {
         }
 
         static void SetEffectiveness(RE::ActiveEffect* effect, float power, bool onlyHostile) {
-            // static std::atomic<std::uint32_t> sampledCalls{0};
-            // if (sampledCalls.fetch_add(1, std::memory_order_relaxed) < 8) {
-            //     SKSE::log::info("[SetEffectiveness] entered effect={} power={} blockedContext={}",
-            //         static_cast<void*>(effect), power, currentHit.has_value());
-            // }
             originalSetEffectiveness(effect, power, onlyHostile);
             if (!currentHit || !effect) {
                 // SKSE::log::info("[SetEffectiveness] No currentHit");
@@ -226,7 +275,9 @@ class hooks {
             }
             // Must belong to the spell from the blocked projectile.
             if (effect->spell != currentHit->spell) {
-                SKSE::log::info("[SetEffectiveness] effect spell: {} is not currenthit spell: {}", static_cast<void*>(effect->spell), static_cast<void*>(currentHit->spell));
+                if (settings::Get().log) {
+                    SKSE::log::info("[SetEffectiveness] effect spell: {} is not currenthit spell: {}", static_cast<void*>(effect->spell), static_cast<void*>(currentHit->spell));
+                }
                 return;
             }
             //only affect damage to H/M/S
@@ -236,28 +287,34 @@ class hooks {
             };
             const bool damageHMS = effect->IsCausingHealthDamage() || (baseEffect && baseEffect->IsDetrimental() && (isVitalActorValue(baseEffect->data.primaryAV) || isVitalActorValue(baseEffect->data.secondaryAV)));
             if (!damageHMS) {
-                SKSE::log::info("[SetEffectiveness] effect does not damage Health, Stamina or Magicka");
+                if (settings::Get().log) {
+                    SKSE::log::info("[SetEffectiveness] effect does not damage Health, Stamina or Magicka");
+                }
                 return;
             }
-            // MagicTarget is a secondary base of Actor. Ask it for the owning
-            // reference instead of reinterpreting its address as an Actor*.
+            // MagicTarget is a secondary base of Actor. Ask it for the owning reference instead of reinterpreting its address as an Actor*.
             auto* victimRef = effect->target ? effect->target->GetTargetStatsObject() : nullptr;
             if (!victimRef || !victimRef->As<RE::Actor>()) {
-                SKSE::log::info("[SetEffectiveness]: unusable victimref");
+                if (settings::Get().log) {
+                    SKSE::log::info("[SetEffectiveness]: unusable victimref");
+                }
                 return;
             }
             const auto victimHandle = victimRef->GetHandle();
             if (victimHandle != currentHit->target) {
-                SKSE::log::info("[SetEffectiveness] target mismatch: effect target {:08X} (handle {:08X}), impact handle {:08X}", victimRef->GetFormID(), victimHandle.native_handle(), currentHit->target.native_handle());
+                if (settings::Get().log) {
+                    SKSE::log::info("[SetEffectiveness] target mismatch: effect target {:08X} (handle {:08X}), impact handle {:08X}", victimRef->GetFormID(), victimHandle.native_handle(), currentHit->target.native_handle());
+                }
                 return;
             }
             const float oldMagnitude = effect->magnitude;
             effect->magnitude *= currentHit->remainingDamage;
-            SKSE::log::info("[SetEffectiveness] blocked spell effect={} magnitude {} -> {}", static_cast<void*>(effect), oldMagnitude, effect->magnitude);
+            if (settings::Get().log) {
+                SKSE::log::info("[SetEffectiveness] blocked spell effect={} magnitude {} -> {}", static_cast<void*>(effect), oldMagnitude, effect->magnitude);
+            }
 
         }
 
         static inline REL::Relocation<decltype(ApplyProjectileSpell)> originalApply;
         static inline REL::Relocation<decltype(SetEffectiveness)> originalSetEffectiveness;
-        // static inline bool projectileHooksInstalled = false;
 };

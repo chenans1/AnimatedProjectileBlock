@@ -41,6 +41,9 @@ target_compile_features(
     PRIVATE cxx_std_23
 )
 
+# The SKSE Menu Framework header uses a wide DLL name with GetModuleHandle.
+target_compile_definitions(${PROJECT_NAME} PRIVATE UNICODE _UNICODE)
+
 target_precompile_headers(
     ${PROJECT_NAME}
     PRIVATE src/PCH.h
