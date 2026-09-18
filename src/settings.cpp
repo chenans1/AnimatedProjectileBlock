@@ -25,6 +25,16 @@ namespace {
         return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
     }
 
+    float readCostFactor(const CSimpleIniA& ini, const char* section, const char* key, float fallback) {
+        const float value = static_cast<float>(ini.GetDoubleValue(section, key, fallback));
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 5.0f) : fallback;
+    }
+
+    float readSpellCost(const CSimpleIniA& ini, const char* section, const char* key, float fallback) {
+        const float value = static_cast<float>(ini.GetDoubleValue(section, key, fallback));
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 250.0f) : fallback;
+    }
+
     void writeBool(CSimpleIniA& ini, const char* section, const char* key, bool value) {
         ini.SetBoolValue(section, key, value);
     }
@@ -83,6 +93,13 @@ namespace settings {
         loaded.pcShieldArrowFactor = readFactor(ini, player, "shieldArrowFactor", loaded.pcShieldArrowFactor);
         loaded.pcWeaponMagicFactor = readFactor(ini, player, "weaponMagicFactor", loaded.pcWeaponMagicFactor);
         loaded.pcShieldMagicFactor = readFactor(ini, player, "shieldMagicFactor", loaded.pcShieldMagicFactor);
+        loaded.pcArrowBlockCostFactor = readCostFactor(ini, player, "arrowBlockCostFactor", loaded.pcArrowBlockCostFactor);
+        loaded.pcWeaponSpellStaminaCost = readSpellCost(ini, player, "weaponSpellStaminaCost", loaded.pcWeaponSpellStaminaCost);
+        loaded.pcShieldSpellStaminaCost = readSpellCost(ini, player, "shieldSpellStaminaCost", loaded.pcShieldSpellStaminaCost);
+        loaded.pcWeaponSpellMagickaCost = readSpellCost(ini, player, "weaponSpellMagickaCost", loaded.pcWeaponSpellMagickaCost);
+        loaded.pcShieldSpellMagickaCost = readSpellCost(ini, player, "shieldSpellMagickaCost", loaded.pcShieldSpellMagickaCost);
+        loaded.pcWeaponFlameCostMultiplier = readCostFactor(ini, player, "weaponFlameCostMultiplier", loaded.pcWeaponFlameCostMultiplier);
+        loaded.pcShieldFlameCostMultiplier = readCostFactor(ini, player, "shieldFlameCostMultiplier", loaded.pcShieldFlameCostMultiplier);
 
         loaded.NPCWeaponArrowEnabled = readBool(ini, npc, "weaponArrowEnabled", loaded.NPCWeaponArrowEnabled);
         loaded.NPCShieldArrowEnabled = readBool(ini, npc, "shieldArrowEnabled", loaded.NPCShieldArrowEnabled);
@@ -92,6 +109,13 @@ namespace settings {
         loaded.NPCShieldArrowFactor = readFactor(ini, npc, "shieldArrowFactor", loaded.NPCShieldArrowFactor);
         loaded.NPCWeaponMagicFactor = readFactor(ini, npc, "weaponMagicFactor", loaded.NPCWeaponMagicFactor);
         loaded.NPCShieldMagicFactor = readFactor(ini, npc, "shieldMagicFactor", loaded.NPCShieldMagicFactor);
+        loaded.NPCArrowBlockCostFactor = readCostFactor(ini, npc, "arrowBlockCostFactor", loaded.NPCArrowBlockCostFactor);
+        loaded.NPCWeaponSpellStaminaCost = readSpellCost(ini, npc, "weaponSpellStaminaCost", loaded.NPCWeaponSpellStaminaCost);
+        loaded.NPCShieldSpellStaminaCost = readSpellCost(ini, npc, "shieldSpellStaminaCost", loaded.NPCShieldSpellStaminaCost);
+        loaded.NPCWeaponSpellMagickaCost = readSpellCost(ini, npc, "weaponSpellMagickaCost", loaded.NPCWeaponSpellMagickaCost);
+        loaded.NPCShieldSpellMagickaCost = readSpellCost(ini, npc, "shieldSpellMagickaCost", loaded.NPCShieldSpellMagickaCost);
+        loaded.NPCWeaponFlameCostMultiplier = readCostFactor(ini, npc, "weaponFlameCostMultiplier", loaded.NPCWeaponFlameCostMultiplier);
+        loaded.NPCShieldFlameCostMultiplier = readCostFactor(ini, npc, "shieldFlameCostMultiplier", loaded.NPCShieldFlameCostMultiplier);
 
         Set(loaded);
         SKSE::log::info("[settings] Loaded {}", iniPath);
@@ -113,6 +137,13 @@ namespace settings {
         writeFactor(ini, player, "shieldArrowFactor", current.pcShieldArrowFactor);
         writeFactor(ini, player, "weaponMagicFactor", current.pcWeaponMagicFactor);
         writeFactor(ini, player, "shieldMagicFactor", current.pcShieldMagicFactor);
+        writeFactor(ini, player, "arrowBlockCostFactor", current.pcArrowBlockCostFactor);
+        writeFactor(ini, player, "weaponSpellStaminaCost", current.pcWeaponSpellStaminaCost);
+        writeFactor(ini, player, "shieldSpellStaminaCost", current.pcShieldSpellStaminaCost);
+        writeFactor(ini, player, "weaponSpellMagickaCost", current.pcWeaponSpellMagickaCost);
+        writeFactor(ini, player, "shieldSpellMagickaCost", current.pcShieldSpellMagickaCost);
+        writeFactor(ini, player, "weaponFlameCostMultiplier", current.pcWeaponFlameCostMultiplier);
+        writeFactor(ini, player, "shieldFlameCostMultiplier", current.pcShieldFlameCostMultiplier);
 
         writeBool(ini, npc, "weaponArrowEnabled", current.NPCWeaponArrowEnabled);
         writeBool(ini, npc, "shieldArrowEnabled", current.NPCShieldArrowEnabled);
@@ -122,6 +153,13 @@ namespace settings {
         writeFactor(ini, npc, "shieldArrowFactor", current.NPCShieldArrowFactor);
         writeFactor(ini, npc, "weaponMagicFactor", current.NPCWeaponMagicFactor);
         writeFactor(ini, npc, "shieldMagicFactor", current.NPCShieldMagicFactor);
+        writeFactor(ini, npc, "arrowBlockCostFactor", current.NPCArrowBlockCostFactor);
+        writeFactor(ini, npc, "weaponSpellStaminaCost", current.NPCWeaponSpellStaminaCost);
+        writeFactor(ini, npc, "shieldSpellStaminaCost", current.NPCShieldSpellStaminaCost);
+        writeFactor(ini, npc, "weaponSpellMagickaCost", current.NPCWeaponSpellMagickaCost);
+        writeFactor(ini, npc, "shieldSpellMagickaCost", current.NPCShieldSpellMagickaCost);
+        writeFactor(ini, npc, "weaponFlameCostMultiplier", current.NPCWeaponFlameCostMultiplier);
+        writeFactor(ini, npc, "shieldFlameCostMultiplier", current.NPCShieldFlameCostMultiplier);
 
         std::error_code ec;
         std::filesystem::create_directories(std::filesystem::path(iniPath).parent_path(), ec);
@@ -139,23 +177,38 @@ namespace settings {
         bool changed = false;
 
         ImGuiMCP::TextUnformatted("Factors multiply calculated block effectiveness (0 = none, 1 = full effectiveness).");
+        ImGuiMCP::TextUnformatted("Spell costs are per application; flame costs also use the flame multiplier.");
         changed |= ImGuiMCP::Checkbox("Enable diagnostic logging", &current.log);
 
         ImGuiMCP::Separator();
         ImGuiMCP::TextUnformatted("Player - arrows");
         changed |= drawBlockRow("Weapon arrow block##player", current.playerWeaponArrowEnabled, current.pcWeaponArrowFactor);
         changed |= drawBlockRow("Shield arrow block##player", current.playerShieldArrowEnabled, current.pcShieldArrowFactor);
+        changed |= ImGuiMCP::SliderFloat("Arrow block stamina cost factor##player", &current.pcArrowBlockCostFactor, 0.0f, 5.0f, "%.1f");
         ImGuiMCP::TextUnformatted("Player - spells");
         changed |= drawBlockRow("Weapon spell block##player", current.playerWeaponMagicEnabled, current.pcWeaponMagicFactor);
         changed |= drawBlockRow("Shield spell block##player", current.playerShieldMagicEnabled, current.pcShieldMagicFactor);
+        changed |= ImGuiMCP::SliderFloat("Weapon spell stamina cost##player", &current.pcWeaponSpellStaminaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Shield spell stamina cost##player", &current.pcShieldSpellStaminaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Weapon spell magicka cost##player", &current.pcWeaponSpellMagickaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Shield spell magicka cost##player", &current.pcShieldSpellMagickaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Weapon flame cost multiplier##player", &current.pcWeaponFlameCostMultiplier, 0.0f, 5.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Shield flame cost multiplier##player", &current.pcShieldFlameCostMultiplier, 0.0f, 5.0f, "%.1f");
 
         ImGuiMCP::Separator();
         ImGuiMCP::TextUnformatted("NPCs - arrows");
         changed |= drawBlockRow("Weapon arrow block##npc", current.NPCWeaponArrowEnabled, current.NPCWeaponArrowFactor);
         changed |= drawBlockRow("Shield arrow block##npc", current.NPCShieldArrowEnabled, current.NPCShieldArrowFactor);
+        changed |= ImGuiMCP::SliderFloat("Arrow block stamina cost factor##npc", &current.NPCArrowBlockCostFactor, 0.0f, 5.0f, "%.1f");
         ImGuiMCP::TextUnformatted("NPCs - spells");
         changed |= drawBlockRow("Weapon spell block##npc", current.NPCWeaponMagicEnabled, current.NPCWeaponMagicFactor);
         changed |= drawBlockRow("Shield spell block##npc", current.NPCShieldMagicEnabled, current.NPCShieldMagicFactor);
+        changed |= ImGuiMCP::SliderFloat("Weapon spell stamina cost##npc", &current.NPCWeaponSpellStaminaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Shield spell stamina cost##npc", &current.NPCShieldSpellStaminaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Weapon spell magicka cost##npc", &current.NPCWeaponSpellMagickaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Shield spell magicka cost##npc", &current.NPCShieldSpellMagickaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Weapon flame cost multiplier##npc", &current.NPCWeaponFlameCostMultiplier, 0.0f, 5.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Shield flame cost multiplier##npc", &current.NPCShieldFlameCostMultiplier, 0.0f, 5.0f, "%.1f");
 
         if (changed) {
             Set(current);  // Apply slider and checkbox changes immediately.

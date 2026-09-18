@@ -5,8 +5,6 @@
 
 class hooks {
     //logic adapted from valhalla combat, hooks adapted from arrowInterpreter. 
-    //not doing flame projectile for now - it would require interrupting the caster
-    //with maxsu block hit overhaul if you block a flame projectile you would literally never be able to move.
     public: 
         static inline void install() {
             SKSE::log::info("[hooks] attempting hooking projectile addimpact functions");
@@ -119,6 +117,48 @@ class hooks {
             return std::clamp(block, 0.0f, cap) * std::clamp(profile.factor, 0.0f, 1.0f);
         }
 
+        struct SpellCosts {
+            float stamina;
+            float magicka;
+            float flameMultiplier;
+        };
+
+        static SpellCosts spellCosts(RE::Actor* actor, const BlockProfile& profile, const settings::config& cfg) {
+            const bool player = actor == RE::PlayerCharacter::GetSingleton();
+            if (player) {
+                return profile.shield
+                    ? SpellCosts{cfg.pcShieldSpellStaminaCost, cfg.pcShieldSpellMagickaCost, cfg.pcShieldFlameCostMultiplier}
+                    : SpellCosts{cfg.pcWeaponSpellStaminaCost, cfg.pcWeaponSpellMagickaCost, cfg.pcWeaponFlameCostMultiplier};
+            }
+            return profile.shield
+                ? SpellCosts{cfg.NPCShieldSpellStaminaCost, cfg.NPCShieldSpellMagickaCost, cfg.NPCShieldFlameCostMultiplier}
+                : SpellCosts{cfg.NPCWeaponSpellStaminaCost, cfg.NPCWeaponSpellMagickaCost, cfg.NPCWeaponFlameCostMultiplier};
+        }
+
+        static bool tryConsumeSpellBlockResources(RE::Actor* blocker, float staminaCost, float magickaCost) {
+            if (!std::isfinite(staminaCost) || !std::isfinite(magickaCost) ||
+                staminaCost < 0.0f || magickaCost < 0.0f) {
+                return false;
+            }
+            auto* values = blocker->AsActorValueOwner();
+            if (!values) {
+                return false;
+            }
+            const float stamina = values->GetActorValue(RE::ActorValue::kStamina);
+            const float magicka = values->GetActorValue(RE::ActorValue::kMagicka);
+            if ((staminaCost > 0.0f && (!std::isfinite(stamina) || stamina < staminaCost)) ||
+                (magickaCost > 0.0f && (!std::isfinite(magicka) || magicka < magickaCost))) {
+                return false;
+            }
+            if (staminaCost > 0.0f) {
+                values->DamageActorValue(RE::ActorValue::kStamina, staminaCost);
+            }
+            if (magickaCost > 0.0f) {
+                values->DamageActorValue(RE::ActorValue::kMagicka, magickaCost);
+            }
+            return true;
+        }
+
         //cooldown to not excessively make actors play blockhit animations
         static bool applyCD(RE::Actor* actor) {
             if (!actor || !cooldownSpell || !cooldownEffect) {
@@ -180,24 +220,26 @@ class hooks {
             return false;
         }
 
-        static bool performProjectileBlock(RE::Actor* blocker, RE::Projectile* projectile, const settings::config& cfg) {
-            if (!blocker || !projectile) {
+        static bool tryConsumeArrowBlockStamina(RE::Actor* blocker, float incomingDamage, const settings::config& cfg, float& cost) {
+            if (!std::isfinite(incomingDamage) || incomingDamage <= 0.0f) {
                 return false;
             }
-
-            if (!getBlockProfile(blocker, false, cfg).enabled) {
+            const bool player = blocker == RE::PlayerCharacter::GetSingleton();
+            const float factor = player ? cfg.pcArrowBlockCostFactor : cfg.NPCArrowBlockCostFactor;
+            cost = (blockSetting("fStaminaBlockBase", 0.0f)
+                + incomingDamage * blockSetting("fStaminaBlockDmgMult", 0.25f))
+                * std::clamp(factor, 0.0f, 5.0f);
+            if (!std::isfinite(cost)) {
                 return false;
             }
-            if (!checkBlockAngle(blocker, projectile) || !blocker->IsBlocking()) {
+            cost = (std::max)(0.0f, cost);
+            auto* values = blocker->AsActorValueOwner();
+            if (!values || values->GetActorValue(RE::ActorValue::kStamina) < cost) {
                 return false;
             }
-            if (projectile->formType == RE::FormType::ProjectileFlame) {
-                if (!applyCD(blocker)) {
-                    // SKSE::log::info("[performProjectileBlock]: flame projectile blocker has CD effect");
-                    return true; 
-                }
+            if (cost > 0.0f) {
+                values->DamageActorValue(RE::ActorValue::kStamina, cost);
             }
-            blocker->NotifyAnimationGraph("BlockHitStart");
             return true;
         }
 
@@ -208,16 +250,33 @@ class hooks {
             }
             if (a_ref->formType == RE::FormType::ActorCharacter) {
                 auto* actor = a_ref->As<RE::Actor>();
+                if (!actor) {
+                    return;
+                }
                 const auto cfg = settings::Get();
-                if (performProjectileBlock(actor, a_projectile, cfg)) {
-                    const auto profile = getBlockProfile(actor, false, cfg);
-                    auto& rd = a_projectile->GetProjectileRuntimeData();
-                    const float reduction = blockedFraction(actor, profile);
-                    rd.weaponDamage *= 1.0f - reduction;
+                const auto profile = getBlockProfile(actor, false, cfg);
+                if (!profile.enabled || !actor->IsBlocking() || !checkBlockAngle(actor, a_projectile)) {
+                    return;
+                }
+                const float reduction = blockedFraction(actor, profile);
+                if (reduction <= 0.0f) {
+                    return;
+                }
+                auto& rd = a_projectile->GetProjectileRuntimeData();
+                const float incomingDamage = rd.weaponDamage;
+                float staminaCost = 0.0f;
+                if (!tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
                     if (cfg.log) {
-                        SKSE::log::info("[processProjectileCollision] projectile={} target={} reduction={} remainingWeaponDamage={}",
-                            static_cast<void*>(a_projectile), static_cast<void*>(a_ref), reduction, rd.weaponDamage);
+                        SKSE::log::info("[processProjectileCollision] arrow block failed: target={} stamina={} required={}",
+                            static_cast<void*>(actor), actor->GetActorValue(RE::ActorValue::kStamina), staminaCost);
                     }
+                    return;
+                }
+                actor->NotifyAnimationGraph("BlockHitStart");
+                rd.weaponDamage = incomingDamage * (1.0f - reduction);
+                if (cfg.log) {
+                    SKSE::log::info("[processProjectileCollision] projectile={} target={} reduction={} staminaCost={} remainingWeaponDamage={}",
+                        static_cast<void*>(a_projectile), static_cast<void*>(a_ref), reduction, staminaCost, rd.weaponDamage);
                 }
             }
         }
@@ -245,18 +304,29 @@ class hooks {
                         const auto cfg = settings::Get();
                         const auto profile = getBlockProfile(actor, true, cfg);
                         auto* spell = projectile->GetProjectileRuntimeData().spell;
-                        if (spell && profile.enabled) {
-                            hit = Hit{
-                                target->GetHandle(),
-                                spell,
-                                1.0f - blockedFraction(actor, profile)
-                            };
-                            if (projectile->formType == RE::FormType::ProjectileFlame) {
-                                if (applyCD(actor)) {
+                        const float reduction = profile.enabled ? blockedFraction(actor, profile) : 0.0f;
+                        if (spell && reduction > 0.0f) {
+                            auto costs = spellCosts(actor, profile, cfg);
+                            const bool flame = projectile->formType == RE::FormType::ProjectileFlame;
+                            if (flame) {
+                                const float scale = std::clamp(costs.flameMultiplier, 0.0f, 5.0f);
+                                costs.stamina *= scale;
+                                costs.magicka *= scale;
+                            }
+                            const bool paid = tryConsumeSpellBlockResources(actor, costs.stamina, costs.magicka);
+                            if (cfg.log && (!flame || !paid)) {
+                                SKSE::log::info("[ApplyProjectileSpell] spell block {}: target={} staminaCost={} magickaCost={}",
+                                    paid ? "paid" : "failed", static_cast<void*>(actor), costs.stamina, costs.magicka);
+                            }
+                            if (paid) {
+                                hit = Hit{target->GetHandle(), spell, 1.0f - reduction};
+                                if (flame) {
+                                    if (applyCD(actor)) {
+                                        actor->NotifyAnimationGraph("BlockHitStart");
+                                    }
+                                } else {
                                     actor->NotifyAnimationGraph("BlockHitStart");
                                 }
-                            } else {
-                                actor->NotifyAnimationGraph("BlockHitStart");
                             }
                         }
                     }
