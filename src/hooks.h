@@ -51,10 +51,32 @@ class hooks {
                 return false;
             }
             SKSE::log::info("Sucessfully loaded enchant cd forms: spell={}, effect={}", static_cast<void*>(cooldownSpell), static_cast<void*>(cooldownEffect));
+            
+            ArrowBlockerSpell = dataHandler->LookupForm<RE::SpellItem>(0x803, "AnimatedProjectileBlocking.esp");
+            ArrowAttackerSpell = dataHandler->LookupForm<RE::SpellItem>(0x805, "AnimatedProjectileBlocking.esp");
+            SpellBlockerSpell = dataHandler->LookupForm<RE::SpellItem>(0x807, "AnimatedProjectileBlocking.esp");
+            SpellAttackerSpell = dataHandler->LookupForm<RE::SpellItem>(0x809, "AnimatedProjectileBlocking.esp");
+
+            if (!ArrowBlockerSpell || !ArrowAttackerSpell || !SpellBlockerSpell || !SpellAttackerSpell) {
+                SKSE::log::error("Failed to load attacker/blocker spell forms: ArrowBlockerSpell={}, ArrowAttackerSpell={}, SpellBlockerSpell={}, SpellAttackerSpell={}", 
+                    static_cast<void*>(ArrowBlockerSpell), static_cast<void*>(ArrowAttackerSpell), static_cast<void*>(SpellBlockerSpell), static_cast<void*>(SpellAttackerSpell));
+                return false;
+            }
+
+            SKSE::log::error("Successfully loaded arrow/spell attacker/blocker spell forms: ArrowBlockerSpell={}, ArrowAttackerSpell={}, SpellBlockerSpell={}, SpellAttackerSpell={}", 
+                    static_cast<void*>(ArrowBlockerSpell), static_cast<void*>(ArrowAttackerSpell), static_cast<void*>(SpellBlockerSpell), static_cast<void*>(SpellAttackerSpell));
             return true;
         }
 
     private:
+        static inline RE::SpellItem* cooldownSpell = nullptr;       // 0x800
+        static inline RE::EffectSetting* cooldownEffect = nullptr;  // 0x801
+
+        static inline RE::SpellItem* ArrowBlockerSpell = nullptr; // 0x803
+        static inline RE::SpellItem* ArrowAttackerSpell = nullptr; // 0x805
+        static inline RE::SpellItem* SpellBlockerSpell = nullptr;  // 0x807
+        static inline RE::SpellItem* SpellAttackerSpell = nullptr; // 0x809
+
         struct Hit {
             RE::ObjectRefHandle target;
             RE::MagicItem* spell;
@@ -237,7 +259,7 @@ class hooks {
             }
             return false;
         }
-
+        
         static bool tryConsumeArrowBlockStamina(RE::Actor* blocker, float incomingDamage, const settings::config& cfg, float& cost) {
             if (!std::isfinite(incomingDamage) || incomingDamage <= 0.0f) {
                 return false;
@@ -311,9 +333,6 @@ class hooks {
         }
 
         static inline REL::Relocation<decltype(AddImpactProj)> _originalArrow;
-
-        static inline RE::SpellItem* cooldownSpell = nullptr;       // 0x800
-        static inline RE::EffectSetting* cooldownEffect = nullptr;  // 0x801
 
         //it turns out this function - which applies the spell effects from projectile collision - actually runs before the addimpact() hooks
         //it also turns out in the same synchronous call, setEffectiveness is called. 
