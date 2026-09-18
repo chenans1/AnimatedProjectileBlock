@@ -47,16 +47,17 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     log::info("{} {} is loading...", plugin->GetName(), version);
     SKSE::Init(skse);
     SKSE::AllocTrampoline(28);
-    // hooks::install();
+    hooks::install();
     SKSE::GetMessagingInterface()->RegisterListener([](SKSE::MessagingInterface::Message* msg) {
         switch (msg->type) {
             case SKSE::MessagingInterface::kDataLoaded:
                 hooks::LoadForms();
+                hooks::InstallSetEffectiveness();
                 break;
-            case SKSE::MessagingInterface::kPostLoadGame:
-            case SKSE::MessagingInterface::kNewGame:
-                hooks::install();
-                break;
+            // case SKSE::MessagingInterface::kPostLoadGame:
+            // case SKSE::MessagingInterface::kNewGame:
+            //     hooks::install();
+            //     break;
             }
     });
     log::info("{} has finished loading.", plugin->GetName());

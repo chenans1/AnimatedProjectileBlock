@@ -15,30 +15,48 @@ class hooks {
                 _originalArrow = vtable.write_vfunc(0xBD, AddImpactProj);
             }
 
-            {
-                REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_MissileProjectile[0]};
-                _originalMissile = vtable.write_vfunc(0xBD, AddImpactMissile);
-            }
+            // {
+            //     REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_MissileProjectile[0]};
+            //     _originalMissile = vtable.write_vfunc(0xBD, AddImpactMissile);
+            // }
 
-            {
-                REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_BeamProjectile[0]};
-                _originalBeam = vtable.write_vfunc(0xBD, AddImpactBeam);
-            }
+            // {
+            //     REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_BeamProjectile[0]};
+            //     _originalBeam = vtable.write_vfunc(0xBD, AddImpactBeam);
+            // }
 
-            {
-                REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_FlameProjectile[0]};
-                _originalFlame = vtable.write_vfunc(0xBD, AddImpactFlame);
-            }
+            // {
+            //     REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_FlameProjectile[0]};
+            //     _originalFlame = vtable.write_vfunc(0xBD, AddImpactFlame);
+            // }
 
             SKSE::log::info("[hooks] attempting hooking projectile ApplyProjectileSpell");
 
             auto& trampoline = SKSE::GetTrampoline();
             // originalApply = trampoline.write_call<5>(REL::RelocationID(42943, 44123).address() + REL::Relocate(0x31C, 0x312), ApplyProjectileSpell);
             originalApply = trampoline.write_call<5>(REL::Relocation<std::uintptr_t>{ REL::Offset(0x7EC608) }.address(), ApplyProjectileSpell);
-            originalSetEffectiveness = SKSE::GetTrampoline().write_call<5>(REL::RelocationID(33763, 34547).address() + REL::Relocate(0x4A3, 0x656), SetEffectiveness);
             SKSE::log::info("[Hooks] originalApply at address: 0x{:X}", originalApply.address());
-            SKSE::log::info("[hooks] SetEffectiveness at address: 0x{:X}", originalSetEffectiveness.address());
+            // projectileHooksInstalled = true;
             SKSE::log::info("[hooks] Finished hooks");
+        }
+
+        static void InstallSetEffectiveness() {
+            if (originalSetEffectiveness.address()) {
+                return;
+            }
+
+            REL::Relocation<std::uintptr_t> checkAddEffect{
+                RELOCATION_ID(33763, 34547), REL::VariantOffset(0x4A3, 0x656, 0x427)
+            };
+            const auto callSite = checkAddEffect.address();
+            if (*reinterpret_cast<const std::uint8_t*>(callSite) != 0xE8) {
+                SKSE::log::error("[hooks] CheckAddEffect site 0x{:X} is not a 5-byte CALL", callSite);
+                return;
+            }
+
+            originalSetEffectiveness = SKSE::GetTrampoline().write_call<5>(callSite, SetEffectiveness);
+            SKSE::log::info("[hooks] SetEffectiveness installed at 0x{:X}; previous target 0x{:X}",
+                callSite, originalSetEffectiveness.address());
         }
 
         static inline bool LoadForms() {
@@ -57,7 +75,6 @@ class hooks {
         
     private: 
         struct Hit {
-            RE::ObjectRefHandle projectile;
             RE::ObjectRefHandle target;
             RE::MagicItem* spell;
             float remainingDamage;
@@ -73,53 +90,8 @@ class hooks {
                 currentHit = std::move(previous);
             }
         };
-
-        static inline std::mutex mutex;
-        static inline std::vector<Hit> pending;
-        static inline thread_local std::optional<Hit> currentHit;
         
-        static void recordHit( RE::Projectile* projectile, RE::TESObjectREFR* target, float remainingDamage) {
-            if (!projectile || !target || !std::isfinite(remainingDamage)) {
-                return;
-            }
-            auto* spell = projectile->GetProjectileRuntimeData().spell;
-            if (!spell) {
-                return;
-            }
-            Hit hit{
-                projectile->GetHandle(),
-                target->GetHandle(),
-                spell,
-                std::clamp(remainingDamage, 0.0f, 1.0f)
-            };
-
-            std::lock_guard lock(mutex);
-            pending.push_back(std::move(hit));
-        }
-
-        static std::optional<Hit> TakeHit(RE::Projectile* projectile, RE::TESObjectREFR* target) {
-            if (!projectile || !target) {
-                return std::nullopt;
-            }
-            
-            const auto projectileHandle = projectile->GetHandle();
-            const auto targetHandle = target->GetHandle();
-            auto* spell = projectile->GetProjectileRuntimeData().spell;
-            if (!spell) {
-                return std::nullopt;
-            }
-
-            std::lock_guard lock(mutex);
-            for (auto it = pending.begin(); it != pending.end(); ++it) {
-                const Hit& hit = *it;
-                if (hit.projectile == projectileHandle && hit.target == targetHandle && hit.spell == spell) {
-                    Hit result = *it;
-                    pending.erase(it);
-                    return result;
-                }
-            }
-            return std::nullopt;
-        }
+        static inline thread_local std::optional<Hit> currentHit;
 
         //cooldown to not excessively make actors play blockhit animations
         static bool applyCD(RE::Actor* actor) {
@@ -206,8 +178,8 @@ class hooks {
             if (a_ref->formType == RE::FormType::ActorCharacter) {
                 auto* actor = a_ref->As<RE::Actor>();
                 if (performProjectileBlock(actor, a_projectile)) {    
-                    SKSE::log::info("[AddImpactMissile] recorded blocked projectile={}, target={}", static_cast<void*>(a_projectile), static_cast<void*>(a_ref));
-                    recordHit(a_projectile, a_ref, 0.0f);
+                    SKSE::log::info("[processProjectileCollision] recorded blocked projectile={}, target={}", static_cast<void*>(a_projectile), static_cast<void*>(a_ref));
+                    // recordHit(a_projectile, a_ref, 0.0f);
                 }
             }
         }
@@ -219,28 +191,28 @@ class hooks {
             return _originalArrow(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
         }
 
-        static RE::Projectile::ImpactData* AddImpactMissile(RE::MissileProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
-            // SKSE::log::info("[AddImpactMissile]");
-            processProjectileCollision(a_projectile, a_ref);
-            return _originalMissile(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
-        }
+        // static RE::Projectile::ImpactData* AddImpactMissile(RE::MissileProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
+        //     // SKSE::log::info("[AddImpactMissile]");
+        //     processProjectileCollision(a_projectile, a_ref);
+        //     return _originalMissile(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
+        // }
         
-        static RE::Projectile::ImpactData* AddImpactBeam(RE::BeamProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
-            // SKSE::log::info("[AddImpactBeam]");
-            processProjectileCollision(a_projectile, a_ref);
-            return _originalBeam(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
-        }
+        // static RE::Projectile::ImpactData* AddImpactBeam(RE::BeamProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
+        //     // SKSE::log::info("[AddImpactBeam]");
+        //     processProjectileCollision(a_projectile, a_ref);
+        //     return _originalBeam(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
+        // }
 
-        static RE::Projectile::ImpactData* AddImpactFlame(RE::FlameProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
-            // SKSE::log::info("[AddImpactFlame]");
-            processProjectileCollision(a_projectile, a_ref);
-            return _originalFlame(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
-        }
+        // static RE::Projectile::ImpactData* AddImpactFlame(RE::FlameProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
+        //     // SKSE::log::info("[AddImpactFlame]");
+        //     processProjectileCollision(a_projectile, a_ref);
+        //     return _originalFlame(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
+        // }
 
         static inline REL::Relocation<decltype(AddImpactProj)> _originalArrow;
-        static inline REL::Relocation<decltype(AddImpactMissile)> _originalMissile;
-        static inline REL::Relocation<decltype(AddImpactBeam)> _originalBeam;
-        static inline REL::Relocation<decltype(AddImpactFlame)> _originalFlame;
+        // static inline REL::Relocation<decltype(AddImpactMissile)> _originalMissile;
+        // static inline REL::Relocation<decltype(AddImpactBeam)> _originalBeam;
+        // static inline REL::Relocation<decltype(AddImpactFlame)> _originalFlame;
 
         static inline RE::SpellItem* cooldownSpell = nullptr;       // 0x800
         static inline RE::EffectSetting* cooldownEffect = nullptr;  // 0x801
@@ -249,31 +221,65 @@ class hooks {
         //it also turns out in the same synchronous call, setEffectiveness is called. 
         static void ApplyProjectileSpell(RE::MagicCaster* caster, const RE::NiPoint3* impactPos, RE::Projectile* projectile, RE::TESObjectREFR* target, float arg5, float arg6, std::uint8_t arg7, std::uint8_t arg8) {
             // HitScope scope(TakeHit(projectile, target));
-            SKSE::log::info("[ApplyProjectileSpell] ENTER: projectile={} target={} blocked={}", static_cast<void*>(projectile), static_cast<void*>(target), currentHit.has_value());
+            // SKSE::log::info("[ApplyProjectileSpell] ENTER: projectile={} target={} blocked={}", static_cast<void*>(projectile), static_cast<void*>(target), currentHit.has_value());
+            std::optional<Hit> hit;
+            if (projectile && target) {
+                if (auto* actor = target->As<RE::Actor>()) {
+                    if (actor->IsBlocking() && checkBlockAngle(actor, projectile)) {
+                        auto* spell = projectile->GetProjectileRuntimeData().spell;
+                        if (spell) {
+                            hit = Hit{
+                                target->GetHandle(),
+                                spell,
+                                0.0f
+                            };
+
+                            if (projectile->formType == RE::FormType::ProjectileFlame) {
+                                if (applyCD(actor)) {
+                                    actor->NotifyAnimationGraph("BlockHitStart");
+                                }
+                            } else {
+                                actor->NotifyAnimationGraph("BlockHitStart");
+                            }
+                        }
+                    }
+                }
+            }
+            HitScope scope(std::move(hit));
             originalApply(caster, impactPos, projectile, target, arg5, arg6, arg7, arg8);
             SKSE::log::info("[ApplyProjectileSpell] EXIT: projectile={} target={} blocked={}", static_cast<void*>(projectile), static_cast<void*>(target), currentHit.has_value());
         }
 
         static void SetEffectiveness(RE::ActiveEffect* effect, float power, bool onlyHostile) {
+            static std::atomic<std::uint32_t> sampledCalls{0};
+            if (sampledCalls.fetch_add(1, std::memory_order_relaxed) < 8) {
+                SKSE::log::info("[SetEffectiveness] entered effect={} power={} blockedContext={}",
+                    static_cast<void*>(effect), power, currentHit.has_value());
+            }
             originalSetEffectiveness(effect, power, onlyHostile);
             if (!currentHit || !effect) {
+                // SKSE::log::info("[SetEffectiveness] No currentHit");
                 return;
             }
             // Must belong to the spell from the blocked projectile.
             if (effect->spell != currentHit->spell) {
+                SKSE::log::info("[SetEffectiveness] effect spell: {} is not currenthit spell: {}", static_cast<void*>(effect->spell), static_cast<void*>(currentHit->spell));
                 return;
             }
-            if (!effect->IsCausingHealthDamage()) {
-                return;
-            }
+            // if (!effect->IsCausingHealthDamage()) {
+            //     return;
+            // }
             //do not reduce damage for targets that aren't blocking
-            auto* victim = effect->GetTargetActor();
-            if (!victim) {
-                return;
-            }
-            if (victim->GetHandle() != currentHit->target) {
-                return;
-            }
+            // auto* victim = effect->GetTargetActor();
+            // if (!victim) {
+            //     SKSE::log::info("[SetEffectiveness] no victim");
+            //     return;
+            // }
+            // const auto victimHandle = victim->GetHandle();
+            // if (victimHandle != currentHit->target) {
+            //     SKSE::log::info("[SetEffectiveness] victim mismatch: victim={} currentHit={}", victimHandle.native_handle(), currentHit->target.native_handle());
+            //     return;
+            // }
             const float oldMagnitude = effect->magnitude;
             effect->magnitude *= currentHit->remainingDamage;
             SKSE::log::info("[SetEffectiveness] blocked spell effect={} magnitude {} -> {}", static_cast<void*>(effect), oldMagnitude, effect->magnitude);
@@ -282,4 +288,5 @@ class hooks {
 
         static inline REL::Relocation<decltype(ApplyProjectileSpell)> originalApply;
         static inline REL::Relocation<decltype(SetEffectiveness)> originalSetEffectiveness;
-};          
+        // static inline bool projectileHooksInstalled = false;
+};
