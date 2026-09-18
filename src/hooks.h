@@ -103,6 +103,14 @@ class hooks {
                           : BlockProfile{cfg.NPCWeaponArrowEnabled, cfg.NPCWeaponArrowFactor, false};
         }
 
+        static bool spellDamageReductionEnabled(RE::Actor* actor, const BlockProfile& profile, const settings::config& cfg) {
+            const bool player = actor == RE::PlayerCharacter::GetSingleton();
+            if (player) {
+                return profile.shield ? cfg.playerShieldSpellDamageReductionEnabled : cfg.playerWeaponSpellDamageReductionEnabled;
+            }
+            return profile.shield ? cfg.NPCShieldSpellDamageReductionEnabled : cfg.NPCWeaponSpellDamageReductionEnabled;
+        }
+
         static float blockSetting(const char* name, float fallback) {
             auto* collection = RE::GameSettingCollection::GetSingleton();
             auto* setting = collection ? collection->GetSetting(name) : nullptr;
@@ -180,6 +188,12 @@ class hooks {
 
             }
             return false;
+        }
+
+        static void playSpellBlockAnimation(RE::Actor* actor, bool flame) {
+            if (!flame || applyCD(actor)) {
+                actor->NotifyAnimationGraph("BlockHitStart");
+            }
         }
         
         //gonna do this via velocity check instead, I think. Using dot product to check for projectile heading to calculate if it's
@@ -304,28 +318,28 @@ class hooks {
                         const auto cfg = settings::Get();
                         const auto profile = getBlockProfile(actor, true, cfg);
                         auto* spell = projectile->GetProjectileRuntimeData().spell;
-                        const float reduction = profile.enabled ? blockedFraction(actor, profile) : 0.0f;
-                        if (spell && reduction > 0.0f) {
-                            auto costs = spellCosts(actor, profile, cfg);
+                        if (spell && profile.enabled) {
                             const bool flame = projectile->formType == RE::FormType::ProjectileFlame;
-                            if (flame) {
-                                const float scale = std::clamp(costs.flameMultiplier, 0.0f, 5.0f);
-                                costs.stamina *= scale;
-                                costs.magicka *= scale;
-                            }
-                            const bool paid = tryConsumeSpellBlockResources(actor, costs.stamina, costs.magicka);
-                            if (cfg.log && (!flame || !paid)) {
-                                SKSE::log::info("[ApplyProjectileSpell] spell block {}: target={} staminaCost={} magickaCost={}",
-                                    paid ? "paid" : "failed", static_cast<void*>(actor), costs.stamina, costs.magicka);
-                            }
-                            if (paid) {
-                                hit = Hit{target->GetHandle(), spell, 1.0f - reduction};
-                                if (flame) {
-                                    if (applyCD(actor)) {
-                                        actor->NotifyAnimationGraph("BlockHitStart");
+                            if (!spellDamageReductionEnabled(actor, profile, cfg)) {
+                                playSpellBlockAnimation(actor, flame);
+                            } else {
+                                const float reduction = blockedFraction(actor, profile);
+                                if (reduction > 0.0f) {
+                                    auto costs = spellCosts(actor, profile, cfg);
+                                    if (flame) {
+                                        const float scale = std::clamp(costs.flameMultiplier, 0.0f, 5.0f);
+                                        costs.stamina *= scale;
+                                        costs.magicka *= scale;
                                     }
-                                } else {
-                                    actor->NotifyAnimationGraph("BlockHitStart");
+                                    const bool paid = tryConsumeSpellBlockResources(actor, costs.stamina, costs.magicka);
+                                    if (cfg.log && (!flame || !paid)) {
+                                        SKSE::log::info("[ApplyProjectileSpell] spell block {}: target={} staminaCost={} magickaCost={}",
+                                            paid ? "paid" : "failed", static_cast<void*>(actor), costs.stamina, costs.magicka);
+                                    }
+                                    if (paid) {
+                                        hit = Hit{target->GetHandle(), spell, 1.0f - reduction};
+                                        playSpellBlockAnimation(actor, flame);
+                                    }
                                 }
                             }
                         }

@@ -15,6 +15,7 @@ namespace {
 
     std::mutex configMutex;
     settings::config activeConfig{};
+    bool unsavedChanges = false;
 
     bool readBool(const CSimpleIniA& ini, const char* section, const char* key, bool fallback) {
         return ini.GetBoolValue(section, key, fallback);
@@ -89,6 +90,8 @@ namespace settings {
         loaded.playerShieldArrowEnabled = readBool(ini, player, "shieldArrowEnabled", loaded.playerShieldArrowEnabled);
         loaded.playerWeaponMagicEnabled = readBool(ini, player, "weaponMagicEnabled", loaded.playerWeaponMagicEnabled);
         loaded.playerShieldMagicEnabled = readBool(ini, player, "shieldMagicEnabled", loaded.playerShieldMagicEnabled);
+        loaded.playerWeaponSpellDamageReductionEnabled = readBool(ini, player, "weaponSpellDamageReductionEnabled", loaded.playerWeaponSpellDamageReductionEnabled);
+        loaded.playerShieldSpellDamageReductionEnabled = readBool(ini, player, "shieldSpellDamageReductionEnabled", loaded.playerShieldSpellDamageReductionEnabled);
         loaded.pcWeaponArrowFactor = readFactor(ini, player, "weaponArrowFactor", loaded.pcWeaponArrowFactor);
         loaded.pcShieldArrowFactor = readFactor(ini, player, "shieldArrowFactor", loaded.pcShieldArrowFactor);
         loaded.pcWeaponMagicFactor = readFactor(ini, player, "weaponMagicFactor", loaded.pcWeaponMagicFactor);
@@ -105,6 +108,8 @@ namespace settings {
         loaded.NPCShieldArrowEnabled = readBool(ini, npc, "shieldArrowEnabled", loaded.NPCShieldArrowEnabled);
         loaded.NPCWeaponMagicEnabled = readBool(ini, npc, "weaponMagicEnabled", loaded.NPCWeaponMagicEnabled);
         loaded.NPCShieldMagicEnabled = readBool(ini, npc, "shieldMagicEnabled", loaded.NPCShieldMagicEnabled);
+        loaded.NPCWeaponSpellDamageReductionEnabled = readBool(ini, npc, "weaponSpellDamageReductionEnabled", loaded.NPCWeaponSpellDamageReductionEnabled);
+        loaded.NPCShieldSpellDamageReductionEnabled = readBool(ini, npc, "shieldSpellDamageReductionEnabled", loaded.NPCShieldSpellDamageReductionEnabled);
         loaded.NPCWeaponArrowFactor = readFactor(ini, npc, "weaponArrowFactor", loaded.NPCWeaponArrowFactor);
         loaded.NPCShieldArrowFactor = readFactor(ini, npc, "shieldArrowFactor", loaded.NPCShieldArrowFactor);
         loaded.NPCWeaponMagicFactor = readFactor(ini, npc, "weaponMagicFactor", loaded.NPCWeaponMagicFactor);
@@ -133,6 +138,8 @@ namespace settings {
         writeBool(ini, player, "shieldArrowEnabled", current.playerShieldArrowEnabled);
         writeBool(ini, player, "weaponMagicEnabled", current.playerWeaponMagicEnabled);
         writeBool(ini, player, "shieldMagicEnabled", current.playerShieldMagicEnabled);
+        writeBool(ini, player, "weaponSpellDamageReductionEnabled", current.playerWeaponSpellDamageReductionEnabled);
+        writeBool(ini, player, "shieldSpellDamageReductionEnabled", current.playerShieldSpellDamageReductionEnabled);
         writeFactor(ini, player, "weaponArrowFactor", current.pcWeaponArrowFactor);
         writeFactor(ini, player, "shieldArrowFactor", current.pcShieldArrowFactor);
         writeFactor(ini, player, "weaponMagicFactor", current.pcWeaponMagicFactor);
@@ -149,6 +156,8 @@ namespace settings {
         writeBool(ini, npc, "shieldArrowEnabled", current.NPCShieldArrowEnabled);
         writeBool(ini, npc, "weaponMagicEnabled", current.NPCWeaponMagicEnabled);
         writeBool(ini, npc, "shieldMagicEnabled", current.NPCShieldMagicEnabled);
+        writeBool(ini, npc, "weaponSpellDamageReductionEnabled", current.NPCWeaponSpellDamageReductionEnabled);
+        writeBool(ini, npc, "shieldSpellDamageReductionEnabled", current.NPCShieldSpellDamageReductionEnabled);
         writeFactor(ini, npc, "weaponArrowFactor", current.NPCWeaponArrowFactor);
         writeFactor(ini, npc, "shieldArrowFactor", current.NPCShieldArrowFactor);
         writeFactor(ini, npc, "weaponMagicFactor", current.NPCWeaponMagicFactor);
@@ -171,63 +180,88 @@ namespace settings {
         return true;
     }
 
+    static void FinishMenuPage(const config& current, bool changed) {
+        if (changed) {
+            Set(current);  // Apply slider and checkbox changes immediately.
+            unsavedChanges = true;
+        }
+        ImGuiMCP::Separator();
+        if (ImGuiMCP::Button("Save")) {
+            if (Save()) {
+                unsavedChanges = false;
+            }
+        }
+        ImGuiMCP::SameLine();
+        if (ImGuiMCP::Button("Revert")) {
+            Load();
+            unsavedChanges = false;
+        }
+        if (unsavedChanges) {
+            ImGuiMCP::TextUnformatted("Unsaved changes");
+        }
+    }
+
     void __stdcall RenderMenuPage() {
         config current = Get();
-        static bool unsaved = false;
         bool changed = false;
 
         ImGuiMCP::TextUnformatted("Factors multiply calculated block effectiveness (0 = none, 1 = full effectiveness).");
-        ImGuiMCP::TextUnformatted("Spell costs are per application; flame costs also use the flame multiplier.");
         changed |= ImGuiMCP::Checkbox("Enable diagnostic logging", &current.log);
 
         ImGuiMCP::Separator();
         ImGuiMCP::TextUnformatted("Player - arrows");
         changed |= drawBlockRow("Weapon arrow block##player", current.playerWeaponArrowEnabled, current.pcWeaponArrowFactor);
         changed |= drawBlockRow("Shield arrow block##player", current.playerShieldArrowEnabled, current.pcShieldArrowFactor);
-        changed |= ImGuiMCP::SliderFloat("Arrow block stamina cost factor##player", &current.pcArrowBlockCostFactor, 0.0f, 5.0f, "%.1f");
         ImGuiMCP::TextUnformatted("Player - spells");
         changed |= drawBlockRow("Weapon spell block##player", current.playerWeaponMagicEnabled, current.pcWeaponMagicFactor);
         changed |= drawBlockRow("Shield spell block##player", current.playerShieldMagicEnabled, current.pcShieldMagicFactor);
-        changed |= ImGuiMCP::SliderFloat("Weapon spell stamina cost##player", &current.pcWeaponSpellStaminaCost, 0.0f, 50.0f, "%.1f");
-        changed |= ImGuiMCP::SliderFloat("Shield spell stamina cost##player", &current.pcShieldSpellStaminaCost, 0.0f, 50.0f, "%.1f");
-        changed |= ImGuiMCP::SliderFloat("Weapon spell magicka cost##player", &current.pcWeaponSpellMagickaCost, 0.0f, 50.0f, "%.1f");
-        changed |= ImGuiMCP::SliderFloat("Shield spell magicka cost##player", &current.pcShieldSpellMagickaCost, 0.0f, 50.0f, "%.1f");
-        changed |= ImGuiMCP::SliderFloat("Weapon flame cost multiplier##player", &current.pcWeaponFlameCostMultiplier, 0.0f, 5.0f, "%.1f");
-        changed |= ImGuiMCP::SliderFloat("Shield flame cost multiplier##player", &current.pcShieldFlameCostMultiplier, 0.0f, 5.0f, "%.1f");
 
         ImGuiMCP::Separator();
         ImGuiMCP::TextUnformatted("NPCs - arrows");
         changed |= drawBlockRow("Weapon arrow block##npc", current.NPCWeaponArrowEnabled, current.NPCWeaponArrowFactor);
         changed |= drawBlockRow("Shield arrow block##npc", current.NPCShieldArrowEnabled, current.NPCShieldArrowFactor);
-        changed |= ImGuiMCP::SliderFloat("Arrow block stamina cost factor##npc", &current.NPCArrowBlockCostFactor, 0.0f, 5.0f, "%.1f");
         ImGuiMCP::TextUnformatted("NPCs - spells");
         changed |= drawBlockRow("Weapon spell block##npc", current.NPCWeaponMagicEnabled, current.NPCWeaponMagicFactor);
         changed |= drawBlockRow("Shield spell block##npc", current.NPCShieldMagicEnabled, current.NPCShieldMagicFactor);
-        changed |= ImGuiMCP::SliderFloat("Weapon spell stamina cost##npc", &current.NPCWeaponSpellStaminaCost, 0.0f, 50.0f, "%.1f");
-        changed |= ImGuiMCP::SliderFloat("Shield spell stamina cost##npc", &current.NPCShieldSpellStaminaCost, 0.0f, 50.0f, "%.1f");
-        changed |= ImGuiMCP::SliderFloat("Weapon spell magicka cost##npc", &current.NPCWeaponSpellMagickaCost, 0.0f, 50.0f, "%.1f");
-        changed |= ImGuiMCP::SliderFloat("Shield spell magicka cost##npc", &current.NPCShieldSpellMagickaCost, 0.0f, 50.0f, "%.1f");
-        changed |= ImGuiMCP::SliderFloat("Weapon flame cost multiplier##npc", &current.NPCWeaponFlameCostMultiplier, 0.0f, 5.0f, "%.1f");
-        changed |= ImGuiMCP::SliderFloat("Shield flame cost multiplier##npc", &current.NPCShieldFlameCostMultiplier, 0.0f, 5.0f, "%.1f");
 
-        if (changed) {
-            Set(current);  // Apply slider and checkbox changes immediately.
-            unsaved = true;
-        }
+        FinishMenuPage(current, changed);
+    }
+
+    void __stdcall RenderCostsPage() {
+        config current = Get();
+        bool changed = false;
+
+        ImGuiMCP::TextUnformatted("Spell costs are per hit. flame costs also use the flame multiplier.");
+        ImGuiMCP::TextUnformatted("Disable damage reduction for animation only and no resource cost.");
+
         ImGuiMCP::Separator();
-        if (ImGuiMCP::Button("Save")) {
-            if (Save()) {
-                unsaved = false;
-            }
-        }
-        ImGuiMCP::SameLine();
-        if (ImGuiMCP::Button("Revert")) {
-            Load();
-            unsaved = false;
-        }
-        if (unsaved) {
-            ImGuiMCP::TextUnformatted("Unsaved changes");
-        }
+        ImGuiMCP::TextUnformatted("Player - arrows");
+        ImGuiMCP::TextUnformatted("Stamina cost: (fStaminaBlockBase + arrow damage x fStaminaBlockDmgMult) x factor");
+        changed |= ImGuiMCP::SliderFloat("Arrow block stamina cost factor##player", &current.pcArrowBlockCostFactor, 0.0f, 5.0f, "%.1f");
+        ImGuiMCP::TextUnformatted("Player - spells");
+        changed |= ImGuiMCP::Checkbox("Reduce weapon spell blocking damage##player", &current.playerWeaponSpellDamageReductionEnabled);
+        changed |= ImGuiMCP::Checkbox("Reduce shield spell blocking damage##player", &current.playerShieldSpellDamageReductionEnabled);
+        changed |= ImGuiMCP::SliderFloat("Weapon spell blocking stamina cost##player", &current.pcWeaponSpellStaminaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Shield spell blocking stamina cost##player", &current.pcShieldSpellStaminaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Weapon spell blocking magicka cost##player", &current.pcWeaponSpellMagickaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Shield spell blocking magicka cost##player", &current.pcShieldSpellMagickaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Weapon flame blocking cost multiplier##player", &current.pcWeaponFlameCostMultiplier, 0.0f, 5.0f, "%.05f");
+        changed |= ImGuiMCP::SliderFloat("Shield flame blocking cost multiplier##player", &current.pcShieldFlameCostMultiplier, 0.0f, 5.0f, "%.05f");
+
+        ImGuiMCP::Separator();
+        ImGuiMCP::TextUnformatted("NPCs - arrows");
+        changed |= ImGuiMCP::SliderFloat("Arrow block stamina cost factor##npc", &current.NPCArrowBlockCostFactor, 0.0f, 5.0f, "%.1f");
+        ImGuiMCP::TextUnformatted("NPCs - spells");
+        changed |= ImGuiMCP::Checkbox("Reduce weapon spell blocking damage##npc", &current.NPCWeaponSpellDamageReductionEnabled);
+        changed |= ImGuiMCP::Checkbox("Reduce shield spell blocking damage##npc", &current.NPCShieldSpellDamageReductionEnabled);
+        changed |= ImGuiMCP::SliderFloat("Weapon spell blocking stamina cost##npc", &current.NPCWeaponSpellStaminaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Shield spell blocking stamina cost##npc", &current.NPCShieldSpellStaminaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Weapon spell blocking magicka cost##npc", &current.NPCWeaponSpellMagickaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Shield spell blocking magicka cost##npc", &current.NPCShieldSpellMagickaCost, 0.0f, 50.0f, "%.1f");
+        changed |= ImGuiMCP::SliderFloat("Weapon flame blocking cost multiplier##npc", &current.NPCWeaponFlameCostMultiplier, 0.0f, 5.0f, "%.05f");
+        changed |= ImGuiMCP::SliderFloat("Shield flame cblocking ost multiplier##npc", &current.NPCShieldFlameCostMultiplier, 0.0f, 5.0f, "%.05f");
+
+        FinishMenuPage(current, changed);
     }
 
     void RegisterMenu() {
@@ -243,7 +277,8 @@ namespace settings {
             return;
         }
         SKSEMenuFramework::SetSection("Animated Projectile Block");
-        SKSEMenuFramework::AddSectionItem("Settings", RenderMenuPage);
-        SKSE::log::info("[settings] Registered SKSE Menu Framework page");
+        SKSEMenuFramework::AddSectionItem("Block Effectiveness", RenderMenuPage);
+        SKSEMenuFramework::AddSectionItem("Resource Costs", RenderCostsPage);
+        SKSE::log::info("[settings] Registered SKSE Menu Framework pages");
     }
 }
