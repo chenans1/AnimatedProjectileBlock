@@ -27,6 +27,8 @@ namespace settings {
         float pcShieldArrowFactor = 0.85f;
         float pcWeaponMagicFactor = 0.70f;
         float pcShieldMagicFactor = 0.85f;
+        // Multiplies Block skill XP earned from blocked projectiles.
+        float pcProjectileBlockExpMult = 1.0f;
 
         float NPCWeaponArrowFactor = 0.70f;
         float NPCShieldArrowFactor = 0.85f;

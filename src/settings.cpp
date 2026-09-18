@@ -98,6 +98,7 @@ namespace settings {
         loaded.pcShieldArrowFactor = readFactor(ini, player, "shieldArrowFactor", loaded.pcShieldArrowFactor);
         loaded.pcWeaponMagicFactor = readFactor(ini, player, "weaponMagicFactor", loaded.pcWeaponMagicFactor);
         loaded.pcShieldMagicFactor = readFactor(ini, player, "shieldMagicFactor", loaded.pcShieldMagicFactor);
+        loaded.pcProjectileBlockExpMult = readCostFactor(ini, player, "projectileBlockExpMult", loaded.pcProjectileBlockExpMult);
         loaded.pcArrowBlockCostFactor = readCostFactor(ini, player, "arrowBlockCostFactor", loaded.pcArrowBlockCostFactor);
         loaded.pcWeaponSpellStaminaCost = readSpellCost(ini, player, "weaponSpellStaminaCost", loaded.pcWeaponSpellStaminaCost);
         loaded.pcShieldSpellStaminaCost = readSpellCost(ini, player, "shieldSpellStaminaCost", loaded.pcShieldSpellStaminaCost);
@@ -150,6 +151,7 @@ namespace settings {
         writeFactor(ini, player, "shieldArrowFactor", current.pcShieldArrowFactor);
         writeFactor(ini, player, "weaponMagicFactor", current.pcWeaponMagicFactor);
         writeFactor(ini, player, "shieldMagicFactor", current.pcShieldMagicFactor);
+        writeFactor(ini, player, "projectileBlockExpMult", current.pcProjectileBlockExpMult);
         writeFactor(ini, player, "arrowBlockCostFactor", current.pcArrowBlockCostFactor);
         writeFactor(ini, player, "weaponSpellStaminaCost", current.pcWeaponSpellStaminaCost);
         writeFactor(ini, player, "shieldSpellStaminaCost", current.pcShieldSpellStaminaCost);
@@ -223,6 +225,7 @@ namespace settings {
         ImGuiMCP::TextUnformatted("Player - spells");
         changed |= drawBlockRow("Weapon spell block##player", current.playerWeaponMagicEnabled, current.pcWeaponMagicFactor);
         changed |= drawBlockRow("Shield spell block##player", current.playerShieldMagicEnabled, current.pcShieldMagicFactor);
+        changed |= ImGuiMCP::SliderFloat("Projectile Block XP multiplier##player", &current.pcProjectileBlockExpMult, 0.0f, 5.0f, "%.2f");
 
         ImGuiMCP::Separator();
         ImGuiMCP::TextUnformatted("NPCs - arrows");

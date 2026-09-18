@@ -81,6 +81,7 @@ class hooks {
             RE::ObjectRefHandle target;
             RE::MagicItem* spell;
             float remainingDamage;
+            // bool shield;
         };
 
         struct HitScope {
@@ -229,6 +230,39 @@ class hooks {
             }
         }
 
+        static void awardBlockExperience(RE::Actor* blocker, float incomingDamage) {
+            if (blocker != RE::PlayerCharacter::GetSingleton() || !std::isfinite(incomingDamage) || incomingDamage <= 0.0f) {
+                return;
+            }
+            const auto* blockSkill = RE::ActorValueList::GetActorValueInfo(RE::ActorValue::kBlock);
+            if (!blockSkill || !blockSkill->skill || !std::isfinite(blockSkill->skill->useMult) || blockSkill->skill->useMult <= 0.0f) {
+                return;
+            }
+            const auto cfg = settings::Get();
+            const float skillUse = incomingDamage * cfg.pcProjectileBlockExpMult;
+            if (!std::isfinite(skillUse) || skillUse <= 0.0f) {
+                return;
+            }
+
+            const auto* tasks = SKSE::GetTaskInterface();
+            if (!tasks) {
+                SKSE::log::error("[awardBlockExperience] SKSE task interface unavailable");
+                return;
+            }
+            if (cfg.log) {
+                SKSE::log::info("[awardBlockExperience] queuing Block skill use: {}", skillUse);
+            }
+            //task interface is probably not needed
+            tasks->AddTask([skillUse]() {
+                if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+                    // player->AddSkillExperience(RE::ActorValue::kBlock, skillUse); ctds??
+                    // NG's Actor::UseSkill declaration omits the fourth SKILL_ACTION argument? checking the charmedbaryon fork it says to use:
+                    using UseSkillFn = void(RE::Actor*, RE::ActorValue, float, RE::TESForm*, RE::SKILL_ACTION);
+                    REL::RelocateVirtual<UseSkillFn>(0x0F7, 0x0F9, static_cast<RE::Actor*>(player), RE::ActorValue::kBlock, skillUse, nullptr, RE::SKILL_ACTION::kNormalUse);
+                }
+            });
+        }
+
         static void sendBlockModEvent(RE::Actor* blocker, RE::Actor* attacker, bool isSpell) {
             if (!blocker || !attacker) {
                 return;
@@ -255,8 +289,7 @@ class hooks {
             return false;
         }
         
-        //gonna do this via velocity check instead, I think. Using dot product to check for projectile heading to calculate if it's
-        //within the block angle cone. 
+        //gonna do this via velocity check instead, I think. Using dot product to check for projectile heading compared to actor heading and blockangle
         static bool checkBlockAngle(RE::Actor* actor, RE::Projectile* projectile) {
             auto* gameSettings = RE::GameSettingCollection::GetSingleton();
             auto* gmst = gameSettings ? gameSettings->GetSetting("fCombatHitConeAngle") : nullptr;
@@ -351,6 +384,7 @@ class hooks {
                 }
                 actor->NotifyAnimationGraph("BlockHitStart");
                 rd.weaponDamage = incomingDamage * (1.0f - reduction);
+                awardBlockExperience(actor, incomingDamage);
 
                 auto* attackerRef = rd.shooter.get().get();
                 auto* attacker = attackerRef ? attackerRef->As<RE::Actor>() : nullptr;
@@ -468,6 +502,10 @@ class hooks {
             }
             const float oldMagnitude = effect->magnitude;
             effect->magnitude *= currentHit->remainingDamage;
+            if (auto* victim = victimRef->As<RE::Actor>()) {
+                awardBlockExperience(victim, oldMagnitude);
+            }
+
             if (settings::Get().log) {
                 SKSE::log::info("[SetEffectiveness] blocked spell effect={} magnitude {} -> {}", static_cast<void*>(effect), oldMagnitude, effect->magnitude);
             }
