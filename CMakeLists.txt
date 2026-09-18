@@ -27,6 +27,8 @@ set(SOURCES
     src/PCH.h
     src/plugin.cpp
     src/hooks.h
+    src/settings.h
+    src/settings.cpp
 )
 
 add_commonlibsse_plugin(

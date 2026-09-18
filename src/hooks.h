@@ -15,21 +15,6 @@ class hooks {
                 _originalArrow = vtable.write_vfunc(0xBD, AddImpactProj);
             }
 
-            // {
-            //     REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_MissileProjectile[0]};
-            //     _originalMissile = vtable.write_vfunc(0xBD, AddImpactMissile);
-            // }
-
-            // {
-            //     REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_BeamProjectile[0]};
-            //     _originalBeam = vtable.write_vfunc(0xBD, AddImpactBeam);
-            // }
-
-            // {
-            //     REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_FlameProjectile[0]};
-            //     _originalFlame = vtable.write_vfunc(0xBD, AddImpactFlame);
-            // }
-
             SKSE::log::info("[hooks] attempting hooking projectile ApplyProjectileSpell");
 
             auto& trampoline = SKSE::GetTrampoline();
@@ -146,7 +131,7 @@ class hooks {
                 
                 const float blockerAngle = actor->GetAngleZ();
                 const float dotProduct = std::sin(blockerAngle) * (-projX / horizontalSpeed) + std::cos(blockerAngle) * (-projY / horizontalSpeed);
-                SKSE::log::info("[checkBlockAngle] angle: {}/{}", std::acos(std::clamp(dotProduct, -1.0f, 1.0f)) * 180.0f/3.1415927f, fCombatHitConeAngle);
+                // SKSE::log::info("[checkBlockAngle] angle: {}/{}", std::acos(std::clamp(dotProduct, -1.0f, 1.0f)) * 180.0f/3.1415927f, fCombatHitConeAngle);
                 return dotProduct >= std::cos(fCombatHitConeAngle * 3.1415927f/180.0f);
             }
             return false;
@@ -179,7 +164,8 @@ class hooks {
                 auto* actor = a_ref->As<RE::Actor>();
                 if (performProjectileBlock(actor, a_projectile)) {    
                     SKSE::log::info("[processProjectileCollision] recorded blocked projectile={}, target={}", static_cast<void*>(a_projectile), static_cast<void*>(a_ref));
-                    // recordHit(a_projectile, a_ref, 0.0f);
+                    auto& rd = a_projectile->GetProjectileRuntimeData();
+                    rd.weaponDamage = 0;
                 }
             }
         }
@@ -224,7 +210,7 @@ class hooks {
             }
             HitScope scope(std::move(hit));
             originalApply(caster, impactPos, projectile, target, arg5, arg6, arg7, arg8);
-            SKSE::log::info("[ApplyProjectileSpell] EXIT: projectile={} target={} blocked={}", static_cast<void*>(projectile), static_cast<void*>(target), currentHit.has_value());
+            // SKSE::log::info("[ApplyProjectileSpell] EXIT: projectile={} target={} blocked={}", static_cast<void*>(projectile), static_cast<void*>(target), currentHit.has_value());
         }
 
         static void SetEffectiveness(RE::ActiveEffect* effect, float power, bool onlyHostile) {
