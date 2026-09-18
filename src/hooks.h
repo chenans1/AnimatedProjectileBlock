@@ -229,6 +229,24 @@ class hooks {
             }
         }
 
+        static void sendBlockModEvent(RE::Actor* blocker, RE::Actor* attacker, bool isSpell) {
+            if (!blocker || !attacker) {
+                return;
+            }
+            auto* source = SKSE::GetModCallbackEventSource();
+            if (!source) {
+                return;
+            }
+            const SKSE::ModCallbackEvent event{
+                .eventName = RE::BSFixedString("APB_OnProjectileBlocked"),
+                .strArg = RE::BSFixedString(std::to_string(attacker->GetFormID())),
+                .numArg = isSpell ? 1.0f : 0.0f,
+                .sender = blocker
+            };
+
+            source->SendEvent(&event);
+        }
+        
         static bool playSpellBlockAnimation(RE::Actor* actor, bool flame) {
             if (!flame || applyCD(actor)) {
                 actor->NotifyAnimationGraph("BlockHitStart");
@@ -339,6 +357,7 @@ class hooks {
                 if (attacker) {
                     castContextSpell(actor, attacker, ArrowBlockerSpell);
                     castContextSpell(attacker, actor, ArrowAttackerSpell);
+                    sendBlockModEvent(actor, attacker, false);
                 }
                 if (cfg.log) {
                     SKSE::log::info("[processProjectileCollision] projectile={} target={} reduction={} staminaCost={} remainingWeaponDamage={}",
@@ -392,6 +411,7 @@ class hooks {
                                             if (attacker) {
                                                 castContextSpell(actor, attacker, SpellBlockerSpell);
                                                 castContextSpell(attacker, actor, SpellAttackerSpell);
+                                                sendBlockModEvent(actor, attacker, true);
                                             }
                                         }
                                     }
