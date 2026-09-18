@@ -63,7 +63,7 @@ class hooks {
                 return false;
             }
 
-            SKSE::log::error("Successfully loaded arrow/spell attacker/blocker spell forms: ArrowBlockerSpell={}, ArrowAttackerSpell={}, SpellBlockerSpell={}, SpellAttackerSpell={}", 
+            SKSE::log::info("Successfully loaded arrow/spell attacker/blocker spell forms: ArrowBlockerSpell={}, ArrowAttackerSpell={}, SpellBlockerSpell={}, SpellAttackerSpell={}", 
                     static_cast<void*>(ArrowBlockerSpell), static_cast<void*>(ArrowAttackerSpell), static_cast<void*>(SpellBlockerSpell), static_cast<void*>(SpellAttackerSpell));
             return true;
         }
@@ -72,10 +72,10 @@ class hooks {
         static inline RE::SpellItem* cooldownSpell = nullptr;       // 0x800
         static inline RE::EffectSetting* cooldownEffect = nullptr;  // 0x801
 
-        static inline RE::SpellItem* ArrowBlockerSpell = nullptr; // 0x803
-        static inline RE::SpellItem* ArrowAttackerSpell = nullptr; // 0x805
-        static inline RE::SpellItem* SpellBlockerSpell = nullptr;  // 0x807
-        static inline RE::SpellItem* SpellAttackerSpell = nullptr; // 0x809
+        static inline RE::SpellItem* ArrowBlockerSpell = nullptr; // 0x803 attacker casts this spell on the blocker
+        static inline RE::SpellItem* ArrowAttackerSpell = nullptr; // 0x805 blocker casts this spell on the attacker
+        static inline RE::SpellItem* SpellBlockerSpell = nullptr;  // 0x807 attacker casts this spell on the blocker
+        static inline RE::SpellItem* SpellAttackerSpell = nullptr; // 0x809 blocker casts this spell on the attacker
 
         struct Hit {
             RE::ObjectRefHandle target;
@@ -216,10 +216,25 @@ class hooks {
             return false;
         }
 
-        static void playSpellBlockAnimation(RE::Actor* actor, bool flame) {
+        static void castContextSpell(RE::Actor* a_caster, RE::Actor* a_target, RE::SpellItem* a_spell) {
+            if (!a_caster || !a_target || !a_spell) {
+                return;
+            }
+            if (auto* caster = a_caster->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant)) {
+                caster->CastSpellImmediate(a_spell, false, a_target, 1.0f, false, 0.0f, a_caster);
+                if (const auto cfg = settings::Get().log) { 
+                    SKSE::log::info("[castContextSpell]: Cast spell={} on target={} caster={}", 
+                        static_cast<void*>(a_spell), static_cast<void*>(a_target), static_cast<void*>(a_caster));
+                }
+            }
+        }
+
+        static bool playSpellBlockAnimation(RE::Actor* actor, bool flame) {
             if (!flame || applyCD(actor)) {
                 actor->NotifyAnimationGraph("BlockHitStart");
+                return true;
             }
+            return false;
         }
         
         //gonna do this via velocity check instead, I think. Using dot product to check for projectile heading to calculate if it's
@@ -318,6 +333,13 @@ class hooks {
                 }
                 actor->NotifyAnimationGraph("BlockHitStart");
                 rd.weaponDamage = incomingDamage * (1.0f - reduction);
+
+                auto* attackerRef = rd.shooter.get().get();
+                auto* attacker = attackerRef ? attackerRef->As<RE::Actor>() : nullptr;
+                if (attacker) {
+                    castContextSpell(actor, attacker, ArrowBlockerSpell);
+                    castContextSpell(attacker, actor, ArrowAttackerSpell);
+                }
                 if (cfg.log) {
                     SKSE::log::info("[processProjectileCollision] projectile={} target={} reduction={} staminaCost={} remainingWeaponDamage={}",
                         static_cast<void*>(a_projectile), static_cast<void*>(a_ref), reduction, staminaCost, rd.weaponDamage);
@@ -365,7 +387,13 @@ class hooks {
                                     }
                                     if (paid) {
                                         hit = Hit{target->GetHandle(), spell, 1.0f - reduction};
-                                        playSpellBlockAnimation(actor, flame);
+                                        if (playSpellBlockAnimation(actor, flame)) {
+                                            auto* attacker = caster ? caster->GetCasterAsActor() : nullptr;
+                                            if (attacker) {
+                                                castContextSpell(actor, attacker, SpellBlockerSpell);
+                                                castContextSpell(attacker, actor, SpellAttackerSpell);
+                                            }
+                                        }
                                     }
                                 }
                             }
