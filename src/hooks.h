@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 class hooks {
     //logic adapted from valhalla combat, hooks adapted from arrowInterpreter. 
     //not doing flame projectile for now - it would require interrupting the caster
@@ -28,7 +30,14 @@ class hooks {
                 _originalFlame = vtable.write_vfunc(0xBD, AddImpactFlame);
             }
 
-            SKSE::log::info("[hooks] attempting hooking projectile addimpact functions");
+            SKSE::log::info("[hooks] attempting hooking projectile ApplyProjectileSpell");
+
+            auto& trampoline = SKSE::GetTrampoline();
+            originalApply = trampoline.write_call<5>(REL::RelocationID(42943, 44123).address() + REL::Relocate(0x31C, 0x312), ApplyProjectileSpell);
+            originalSetEffectiveness = SKSE::GetTrampoline().write_call<5>(REL::RelocationID(33763, 34547).address() + REL::Relocate(0x4A3, 0x656), SetEffectiveness);
+            SKSE::log::info("[Hooks] originalApply at address: 0x{:X}", originalApply.address());
+            SKSE::log::info("[hooks] SetEffectiveness at address: 0x{:X}", originalSetEffectiveness.address());
+            SKSE::log::info("[hooks] Finished hooks");
         }
 
         static inline bool LoadForms() {
@@ -46,6 +55,37 @@ class hooks {
         }
         
     private: 
+        struct Hit {
+            RE::ObjectRefHandle projectile;
+            RE::ObjectRefHandle target;
+            RE::MagicItem* spell;
+            float remainingDamage;
+        };
+
+        struct HitScope {
+            std::optional<Hit> previous;
+            explicit HitScope(std::optional<Hit> hit) : 
+                previous(std::exchange(currentHit, std::move(hit)))
+            {}
+            ~HitScope()
+            {
+                currentHit = std::move(previous);
+            }
+        };
+
+        static inline std::mutex mutex;
+        static inline std::unordered_map<const RE::Projectile::ImpactData*, Hit> pending;
+        static inline thread_local std::optional<Hit> currentHit;
+        // static inline std::atomic<std::uint32_t> loggedCollisions{0};
+
+        // static std::optional<Hit> TakeHit(RE::Projectile* projectile, RE::Projectile::ImpactData* impact) {
+        //     if (!projectile || !impact) {
+        //         return std::nullopt;
+        //     }
+        //     std::lock_guard lock(mutex);
+
+        // }
+
         //cooldown to not excessively make actors play blockhit animations
         static bool applyCD(RE::Actor* actor) {
             if (!actor || !cooldownSpell || !cooldownEffect) {
@@ -130,7 +170,8 @@ class hooks {
                 return;
             }
             if (a_ref->formType == RE::FormType::ActorCharacter) {
-                performProjectileBlock(a_ref->As<RE::Actor>(), a_projectile);
+                auto* actor = a_ref->As<RE::Actor>();
+                performProjectileBlock(actor, a_projectile);
             }
         }
 
@@ -166,4 +207,21 @@ class hooks {
 
         static inline RE::SpellItem* cooldownSpell = nullptr;       // 0x800
         static inline RE::EffectSetting* cooldownEffect = nullptr;  // 0x801
-};  
+
+        //called from inside Projectile::ProcessImpact()??
+        static void ApplyProjectileSpell(RE::MagicCaster* caster, const RE::NiPoint3* impactPos, RE::Projectile* projectile, RE::TESObjectREFR* target, float arg5, float arg6, std::uint8_t arg7, std::uint8_t arg8) {
+            // HitScope scope(TakeHit(projectile, impact));
+            SKSE::log::info("[ApplyProjectileSpell] projectile={} target={}", static_cast<void*>(projectile), static_cast<void*>(target));
+            originalApply(caster, impactPos, projectile, target, arg5, arg6, arg7, arg8);
+        }
+
+        static void SetEffectiveness(RE::ActiveEffect* effect, float power, bool onlyHostile) {
+            originalSetEffectiveness(effect, power, onlyHostile);
+            // if (effect) {
+            //     SKSE::log::info("[SetEffectiveness] magnitude after original={}", effect->magnitude);
+            // }
+        }
+
+        static inline REL::Relocation<decltype(ApplyProjectileSpell)> originalApply;
+        static inline REL::Relocation<decltype(SetEffectiveness)> originalSetEffectiveness;
+};          

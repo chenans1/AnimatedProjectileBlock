@@ -3,7 +3,7 @@
 cmake_minimum_required (VERSION 3.19)
 
 # Set your project name. This will be the name of your SKSE .dll file.
-project(AnimatedProjectileBlock VERSION 0.0.1 LANGUAGES CXX)
+project(zAnimatedProjectileBlock VERSION 0.0.1 LANGUAGES CXX)
 
 set(OUTPUT_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}/output")
 
