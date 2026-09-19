@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <charconv>
+#include <cctype>
 #include "settings.h"
 #include "extern/PerkEntryPointExtenderAPI.h"
 
@@ -66,6 +68,12 @@ class hooks {
 
             SKSE::log::info("Successfully loaded arrow/spell attacker/blocker spell forms: ArrowBlockerSpell={}, ArrowAttackerSpell={}, SpellBlockerSpell={}, SpellAttackerSpell={}", 
                     static_cast<void*>(ArrowBlockerSpell), static_cast<void*>(ArrowAttackerSpell), static_cast<void*>(SpellBlockerSpell), static_cast<void*>(SpellAttackerSpell));
+
+            const auto cfg = settings::Get();
+            playerWeaponArrowPerk = loadPerkRequirement(cfg.playerWeaponArrowPerkRequirement, "weapon arrow");
+            playerShieldArrowPerk = loadPerkRequirement(cfg.playerShieldArrowPerkRequirement, "shield arrow");
+            playerWeaponSpellPerk = loadPerkRequirement(cfg.playerWeaponSpellPerkRequirement, "weapon spell");
+            playerShieldSpellPerk = loadPerkRequirement(cfg.playerShieldSpellPerkRequirement, "shield spell");
             return true;
         }
 
@@ -78,6 +86,70 @@ class hooks {
         static inline RE::SpellItem* ArrowAttackerSpell = nullptr; // 0x805 blocker casts this spell on the attacker
         static inline RE::SpellItem* SpellBlockerSpell = nullptr;  // 0x807 attacker casts this spell on the blocker
         static inline RE::SpellItem* SpellAttackerSpell = nullptr; // 0x809 blocker casts this spell on the attacker
+
+        struct PerkRequirement {
+            bool configured = false;
+            RE::BGSPerk* perk = nullptr;
+        };
+
+        static inline PerkRequirement playerWeaponArrowPerk;
+        static inline PerkRequirement playerShieldArrowPerk;
+        static inline PerkRequirement playerWeaponSpellPerk;
+        static inline PerkRequirement playerShieldSpellPerk;
+
+        static std::string_view trim(std::string_view value) {
+            const auto isSpace = [](char ch) { return std::isspace(static_cast<unsigned char>(ch)) != 0; };
+            while (!value.empty() && isSpace(value.front())) {
+                value.remove_prefix(1);
+            }
+            while (!value.empty() && isSpace(value.back())) {
+                value.remove_suffix(1);
+            }
+            return value;
+        }
+
+        static PerkRequirement loadPerkRequirement(std::string_view setting, std::string_view context) {
+            setting = trim(setting);
+            if (setting.empty()) {
+                SKSE::log::info("[perk requirement] {} blocking is unrestricted", context);
+                return {};
+            }
+
+            PerkRequirement requirement{};
+            const auto separator = setting.rfind('-');
+            if (separator == std::string_view::npos) {
+                SKSE::log::error("[perk requirement] Invalid {} requirement '{}'; expected <plugin>-0x<FormID>; no perk will be required", context, setting);
+                return requirement;
+            }
+
+            const auto plugin = trim(setting.substr(0, separator));
+            auto formIDText = trim(setting.substr(separator + 1));
+            if (plugin.empty() || formIDText.empty()) {
+                SKSE::log::error("[perk requirement] Invalid {} requirement '{}'; expected <plugin>-0x<FormID>; no perk will be required", context, setting);
+                return requirement;
+            }
+            if (formIDText.starts_with("0x") || formIDText.starts_with("0X")) {
+                formIDText.remove_prefix(2);
+            }
+
+            RE::FormID localFormID = 0;
+            const auto [end, error] = std::from_chars(formIDText.data(), formIDText.data() + formIDText.size(), localFormID, 16);
+            if (formIDText.empty() || error != std::errc{} || end != formIDText.data() + formIDText.size() || localFormID > 0x00FFFFFF) {
+                SKSE::log::error("[perk requirement] Invalid {} FormID in '{}'; use a plugin-local hexadecimal FormID; no perk will be required", context, setting);
+                return requirement;
+            }
+
+            auto* dataHandler = RE::TESDataHandler::GetSingleton();
+            requirement.perk = dataHandler ? dataHandler->LookupForm<RE::BGSPerk>(localFormID, plugin) : nullptr;
+            if (!requirement.perk) {
+                SKSE::log::error("[perk requirement] Could not resolve {} perk '{}'; no perk will be required", context, setting);
+                return requirement;
+            }
+
+            requirement.configured = true;
+            SKSE::log::info("[perk requirement] Loaded {} perk '{}' as {:08X}", context, setting, requirement.perk->GetFormID());
+            return requirement;
+        }
 
         struct Hit {
             RE::ObjectRefHandle target;
@@ -103,6 +175,7 @@ class hooks {
             bool enabled;
             float factor;
             bool shield;
+            const PerkRequirement* perkRequirement;
         };
 
         static BlockProfile getBlockProfile(RE::Actor* actor, bool spell, const settings::config& cfg) {
@@ -110,18 +183,43 @@ class hooks {
             const bool player = actor == RE::PlayerCharacter::GetSingleton();
             if (player) {
                 if (spell) {
-                    return shield ? BlockProfile{cfg.playerShieldMagicEnabled, cfg.pcShieldMagicFactor, true}
-                                  : BlockProfile{cfg.playerWeaponMagicEnabled, cfg.pcWeaponMagicFactor, false};
+                    return shield ? BlockProfile{cfg.playerShieldMagicEnabled, cfg.pcShieldMagicFactor, true, &playerShieldSpellPerk}
+                                  : BlockProfile{cfg.playerWeaponMagicEnabled, cfg.pcWeaponMagicFactor, false, &playerWeaponSpellPerk};
                 }
-                return shield ? BlockProfile{cfg.playerShieldArrowEnabled, cfg.pcShieldArrowFactor, true}
-                              : BlockProfile{cfg.playerWeaponArrowEnabled, cfg.pcWeaponArrowFactor, false};
+                return shield ? BlockProfile{cfg.playerShieldArrowEnabled, cfg.pcShieldArrowFactor, true, &playerShieldArrowPerk}
+                              : BlockProfile{cfg.playerWeaponArrowEnabled, cfg.pcWeaponArrowFactor, false, &playerWeaponArrowPerk};
             }
             if (spell) {
-                return shield ? BlockProfile{cfg.NPCShieldMagicEnabled, cfg.NPCShieldMagicFactor, true}
-                              : BlockProfile{cfg.NPCWeaponMagicEnabled, cfg.NPCWeaponMagicFactor, false};
+                return shield ? BlockProfile{cfg.NPCShieldMagicEnabled, cfg.NPCShieldMagicFactor, true, nullptr}
+                              : BlockProfile{cfg.NPCWeaponMagicEnabled, cfg.NPCWeaponMagicFactor, false, nullptr};
             }
-            return shield ? BlockProfile{cfg.NPCShieldArrowEnabled, cfg.NPCShieldArrowFactor, true}
-                          : BlockProfile{cfg.NPCWeaponArrowEnabled, cfg.NPCWeaponArrowFactor, false};
+            return shield ? BlockProfile{cfg.NPCShieldArrowEnabled, cfg.NPCShieldArrowFactor, true, nullptr}
+                          : BlockProfile{cfg.NPCWeaponArrowEnabled, cfg.NPCWeaponArrowFactor, false, nullptr};
+        }
+
+        static bool hasRequiredPerk(RE::Actor* actor, const BlockProfile& profile) {
+            if (actor != RE::PlayerCharacter::GetSingleton() || !profile.perkRequirement || !profile.perkRequirement->configured) {
+                return true;
+            }
+            return profile.perkRequirement->perk && actor->HasPerk(profile.perkRequirement->perk);
+        }
+
+        enum class BlockMode {
+            kDisabled,
+            kAnimationOnly,
+            kDamageReduction
+        };
+
+        static BlockMode getBlockMode(RE::Actor* actor, const BlockProfile& profile, bool damageReductionEnabled) {
+            if (!profile.enabled) {
+                return BlockMode::kDisabled;
+            }
+
+            const bool requirementMet = hasRequiredPerk(actor, profile);
+            if (damageReductionEnabled) {
+                return requirementMet ? BlockMode::kDamageReduction : BlockMode::kAnimationOnly;
+            }
+            return requirementMet ? BlockMode::kAnimationOnly : BlockMode::kDisabled;
         }
 
         static bool spellDamageReductionEnabled(RE::Actor* actor, const BlockProfile& profile, const settings::config& cfg) {
@@ -160,7 +258,7 @@ class hooks {
             // The GMST supplies the starting block value. not factoring in attacker base weapon damage or the spell damage incoming.
             float blockBase = profile.shield ? blockSetting("fShieldBaseFactor", 0.45f) : blockSetting("fBlockWeaponBase", 0.30f);
             const float blockSkill =(std::max)(0.0f, actor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kBlock));
-            //fBlockSkillBase and fBlockSkillMult are unused as far as I can tell
+            // fBlockSkillBase and fBlockSkillMult are unused as far as I can tell
             // const float skillFactor = blockSetting("fBlockSkillBase", 1.0f) + (blockSkill/100.0f) * blockSetting("fBlockSkillMult", 1.5f);
             // SKSE::log::info("[blockedFraction]: fBlockSkillBase={} fBlockSkillMult={}", blockSetting("fBlockSkillBase", 1.0f), blockSetting("fBlockSkillMult", 1.5f));
             const float skillFactor = 1+blockSkill*0.015f;
@@ -401,10 +499,14 @@ class hooks {
                 }
                 const auto cfg = settings::Get();
                 const auto profile = getBlockProfile(actor, false, cfg);
-                if (!profile.enabled || !actor->IsBlocking() || !checkBlockAngle(actor, a_projectile)) {
+                if (!actor->IsBlocking() || !checkBlockAngle(actor, a_projectile)) {
                     return;
                 }
-                if (!arrowDamageReductionEnabled(actor, profile, cfg)) {
+                const auto mode = getBlockMode(actor, profile, arrowDamageReductionEnabled(actor, profile, cfg));
+                if (mode == BlockMode::kDisabled) {
+                    return;
+                }
+                if (mode == BlockMode::kAnimationOnly) {
                     actor->NotifyAnimationGraph("BlockHitStart");
                     return;
                 }
@@ -460,11 +562,12 @@ class hooks {
                         const auto cfg = settings::Get();
                         const auto profile = getBlockProfile(actor, true, cfg);
                         auto* spell = projectile->GetProjectileRuntimeData().spell;
-                        if (spell && profile.enabled) {
+                        if (spell) {
                             const bool flame = projectile->formType == RE::FormType::ProjectileFlame;
-                            if (!spellDamageReductionEnabled(actor, profile, cfg)) {
+                            const auto mode = getBlockMode(actor, profile, spellDamageReductionEnabled(actor, profile, cfg));
+                            if (mode == BlockMode::kAnimationOnly) {
                                 playSpellBlockAnimation(actor, flame);
-                            } else {
+                            } else if (mode == BlockMode::kDamageReduction) {
                                 const float reduction = blockedFraction(actor, profile, true);
                                 if (reduction > 0.0f) {
                                     auto costs = spellCosts(actor, profile, cfg);

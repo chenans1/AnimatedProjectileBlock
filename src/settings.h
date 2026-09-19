@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 namespace settings {
     struct config {
         bool log = true;
@@ -13,6 +15,12 @@ namespace settings {
         bool playerWeaponSpellDamageReductionEnabled = true;
         bool playerShieldSpellDamageReductionEnabled = true;
 
+        // Blank means no perk requirement. Invalid also means no requirement. <plugin>-<local hex FormID>, eg: MyPerks.esl-0x800.
+        std::string playerWeaponArrowPerkRequirement;
+        std::string playerShieldArrowPerkRequirement;
+        std::string playerWeaponSpellPerkRequirement;
+        std::string playerShieldSpellPerkRequirement;
+
         bool NPCWeaponArrowEnabled = true;
         bool NPCShieldArrowEnabled = true;
         bool NPCWeaponArrowDamageReductionEnabled = true;
@@ -21,7 +29,7 @@ namespace settings {
         bool NPCShieldMagicEnabled = true;
         bool NPCWeaponSpellDamageReductionEnabled = true;
         bool NPCShieldSpellDamageReductionEnabled = true;
-
+        
         // Multiplier applied to the calculated block fraction (0.0 to 1.0).
         float pcWeaponArrowFactor = 0.70f;
         float pcShieldArrowFactor = 0.85f;

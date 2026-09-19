@@ -21,6 +21,10 @@ namespace {
         return ini.GetBoolValue(section, key, fallback);
     }
 
+    std::string readString(const CSimpleIniA& ini, const char* section, const char* key, const std::string& fallback) {
+        return ini.GetValue(section, key, fallback.c_str());
+    }
+
     float readFactor(const CSimpleIniA& ini, const char* section, const char* key, float fallback) {
         const float value = static_cast<float>(ini.GetDoubleValue(section, key, fallback));
         return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
@@ -38,6 +42,10 @@ namespace {
 
     void writeBool(CSimpleIniA& ini, const char* section, const char* key, bool value) {
         ini.SetBoolValue(section, key, value);
+    }
+
+    void writeString(CSimpleIniA& ini, const char* section, const char* key, const std::string& value) {
+        ini.SetValue(section, key, value.c_str());
     }
 
     void writeFactor(CSimpleIniA& ini, const char* section, const char* key, float value) {
@@ -94,6 +102,10 @@ namespace settings {
         loaded.playerShieldMagicEnabled = readBool(ini, player, "shieldMagicEnabled", loaded.playerShieldMagicEnabled);
         loaded.playerWeaponSpellDamageReductionEnabled = readBool(ini, player, "weaponSpellDamageReductionEnabled", loaded.playerWeaponSpellDamageReductionEnabled);
         loaded.playerShieldSpellDamageReductionEnabled = readBool(ini, player, "shieldSpellDamageReductionEnabled", loaded.playerShieldSpellDamageReductionEnabled);
+        loaded.playerWeaponArrowPerkRequirement = readString(ini, player, "weaponArrowPerkRequirement", loaded.playerWeaponArrowPerkRequirement);
+        loaded.playerShieldArrowPerkRequirement = readString(ini, player, "shieldArrowPerkRequirement", loaded.playerShieldArrowPerkRequirement);
+        loaded.playerWeaponSpellPerkRequirement = readString(ini, player, "weaponSpellPerkRequirement", loaded.playerWeaponSpellPerkRequirement);
+        loaded.playerShieldSpellPerkRequirement = readString(ini, player, "shieldSpellPerkRequirement", loaded.playerShieldSpellPerkRequirement);
         loaded.pcWeaponArrowFactor = readFactor(ini, player, "weaponArrowFactor", loaded.pcWeaponArrowFactor);
         loaded.pcShieldArrowFactor = readFactor(ini, player, "shieldArrowFactor", loaded.pcShieldArrowFactor);
         loaded.pcWeaponMagicFactor = readFactor(ini, player, "weaponMagicFactor", loaded.pcWeaponMagicFactor);
@@ -147,6 +159,10 @@ namespace settings {
         writeBool(ini, player, "shieldMagicEnabled", current.playerShieldMagicEnabled);
         writeBool(ini, player, "weaponSpellDamageReductionEnabled", current.playerWeaponSpellDamageReductionEnabled);
         writeBool(ini, player, "shieldSpellDamageReductionEnabled", current.playerShieldSpellDamageReductionEnabled);
+        writeString(ini, player, "weaponArrowPerkRequirement", current.playerWeaponArrowPerkRequirement);
+        writeString(ini, player, "shieldArrowPerkRequirement", current.playerShieldArrowPerkRequirement);
+        writeString(ini, player, "weaponSpellPerkRequirement", current.playerWeaponSpellPerkRequirement);
+        writeString(ini, player, "shieldSpellPerkRequirement", current.playerShieldSpellPerkRequirement);
         writeFactor(ini, player, "weaponArrowFactor", current.pcWeaponArrowFactor);
         writeFactor(ini, player, "shieldArrowFactor", current.pcShieldArrowFactor);
         writeFactor(ini, player, "weaponMagicFactor", current.pcWeaponMagicFactor);
@@ -275,7 +291,8 @@ namespace settings {
         config current = Get();
         bool changed = false;
 
-        ImGuiMCP::TextUnformatted("Uncheck damage reduction for animation only, with no resource cost.");
+        ImGuiMCP::TextUnformatted("Uncheck damage reduction for animation only, with no resource cost, when any perk requirement is met.");
+        ImGuiMCP::TextUnformatted("With reduction enabled, a missing required perk still plays the block-hit animation.");
         ImGuiMCP::TextUnformatted("The matching block must still be enabled on the Block Effectiveness page.");
 
         ImGuiMCP::Separator();
