@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include "settings.h"
+#include "extern/PerkEntryPointExtenderAPI.h"
 
 class hooks {
     //logic adapted from valhalla combat, hooks adapted from arrowInterpreter. 
@@ -69,6 +70,7 @@ class hooks {
         }
 
     private:
+        
         static inline RE::SpellItem* cooldownSpell = nullptr;       // 0x800
         static inline RE::EffectSetting* cooldownEffect = nullptr;  // 0x801
 
@@ -138,18 +140,43 @@ class hooks {
             return profile.shield ? cfg.NPCShieldArrowDamageReductionEnabled : cfg.NPCWeaponArrowDamageReductionEnabled;
         }
 
+        static float projectilePerkMultiplier(RE::Actor* actor, std::string_view category) {
+            float multiplier = 1.0f;
+            const auto result = RE::HandleEntryPoint(RE::PerkEntryPoint::kModTelekinesisDistance, actor, multiplier, category);
+            if (settings::Get().log) {
+                SKSE::log::info("[PEPE] category={} result={} value={}",category,static_cast<int>(result),multiplier);
+            }
+            return (std::max)(0.0f, multiplier);
+        }
+
         static float blockSetting(const char* name, float fallback) {
             auto* collection = RE::GameSettingCollection::GetSingleton();
             auto* setting = collection ? collection->GetSetting(name) : nullptr;
             return setting && setting->GetType() == RE::Setting::Type::kFloat ? setting->GetFloat() : fallback;
         }
 
-        static float blockedFraction(RE::Actor* actor, const BlockProfile& profile) {
-            // The GMST supplies the starting block value. Perks then modify that value via the same entry point used by the game's block calculation.
-            float block = profile.shield ? blockSetting("fShieldBaseFactor", 0.45f) : blockSetting("fBlockWeaponBase", 0.30f);
+        //calculates how much to block
+        static float blockedFraction(RE::Actor* actor, const BlockProfile& profile, bool isSpell) {
+            // The GMST supplies the starting block value. not factoring in attacker base weapon damage or the spell damage incoming.
+            float blockBase = profile.shield ? blockSetting("fShieldBaseFactor", 0.45f) : blockSetting("fBlockWeaponBase", 0.30f);
+            const float blockSkill =(std::max)(0.0f, actor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kBlock));
+            //fBlockSkillBase and fBlockSkillMult are unused as far as I can tell
+            // const float skillFactor = blockSetting("fBlockSkillBase", 1.0f) + (blockSkill/100.0f) * blockSetting("fBlockSkillMult", 1.5f);
+            // SKSE::log::info("[blockedFraction]: fBlockSkillBase={} fBlockSkillMult={}", blockSetting("fBlockSkillBase", 1.0f), blockSetting("fBlockSkillMult", 1.5f));
+            const float skillFactor = 1+blockSkill*0.015f;
+            //fortify block 10% translates to 10 av with in game inspection, so 1+(av/100) - value defaults to 0
+            const float blockMod = 1+(actor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kBlockModifier))/100;
+            float block = blockBase * skillFactor * blockMod;
             RE::BGSEntryPoint::HandleEntryPoint(RE::BGSEntryPoint::ENTRY_POINT::kModPercentBlocked, actor, &block);
-            const float cap = std::clamp(blockSetting("fBlockMax", 0.70f), 0.0f, 1.0f);
-            return std::clamp(block, 0.0f, cap) * std::clamp(profile.factor, 0.0f, 1.0f);
+            const float cap = std::clamp(blockSetting("fBlockMax", 0.85f), 0.0f, 1.0f);
+            const float PEPEMultiplier = projectilePerkMultiplier(actor, isSpell ? "APB_kModSpellBlock" : "APB_kModArrowBlock");
+            
+            if (settings::Get().log) {
+                SKSE::log::info("[blockedFraction]: blockBase={} blockskill={} skillFactor={} blockMod={} block={} * PEPEMult={} ", 
+                    blockBase, blockSkill, skillFactor, blockMod, block, PEPEMultiplier);
+            }
+            // return std::clamp(block, 0.0f, cap) * std::clamp(profile.factor, 0.0f, 1.0f);
+            return std::clamp(block*PEPEMultiplier*profile.factor, 0.0f, cap);
         }
 
         struct SpellCosts {
@@ -170,6 +197,15 @@ class hooks {
                 : SpellCosts{cfg.NPCWeaponSpellStaminaCost, cfg.NPCWeaponSpellMagickaCost, cfg.NPCWeaponFlameCostMultiplier};
         }
 
+        static float PEPE_costMult(RE::Actor* actor, std::string_view category) {
+            float multiplier = 1.0f;
+            const auto result = RE::HandleEntryPoint(RE::PerkEntryPoint::kModTelekinesisDistance, actor, multiplier, category);
+            if (settings::Get().log) {
+                SKSE::log::info("[PEPE] CostMult: category={} result={} value={}",category,static_cast<int>(result),multiplier);
+            }
+            return (std::max)(0.0f, multiplier);
+        }
+
         static bool tryConsumeSpellBlockResources(RE::Actor* blocker, float staminaCost, float magickaCost) {
             if (!std::isfinite(staminaCost) || !std::isfinite(magickaCost) ||
                 staminaCost < 0.0f || magickaCost < 0.0f) {
@@ -179,12 +215,18 @@ class hooks {
             if (!values) {
                 return false;
             }
+            const float PEPEfactor = PEPE_costMult(blocker,"APB_SpellBlockCost");
+            
+            staminaCost *= PEPEfactor;
+            magickaCost *= PEPEfactor;
+
             const float stamina = values->GetActorValue(RE::ActorValue::kStamina);
             const float magicka = values->GetActorValue(RE::ActorValue::kMagicka);
             if ((staminaCost > 0.0f && (!std::isfinite(stamina) || stamina < staminaCost)) ||
                 (magickaCost > 0.0f && (!std::isfinite(magicka) || magicka < magickaCost))) {
                 return false;
             }
+            
             if (staminaCost > 0.0f) {
                 values->DamageActorValue(RE::ActorValue::kStamina, staminaCost);
             }
@@ -332,13 +374,11 @@ class hooks {
             }
             const bool player = blocker == RE::PlayerCharacter::GetSingleton();
             const float factor = player ? cfg.pcArrowBlockCostFactor : cfg.NPCArrowBlockCostFactor;
-            cost = (blockSetting("fStaminaBlockBase", 0.0f)
-                + incomingDamage * blockSetting("fStaminaBlockDmgMult", 0.25f))
-                * std::clamp(factor, 0.0f, 5.0f);
+            cost = (blockSetting("fStaminaBlockBase", 0.0f) + incomingDamage * blockSetting("fStaminaBlockDmgMult", 0.25f)) * std::clamp(factor, 0.0f, 5.0f);
             if (!std::isfinite(cost)) {
                 return false;
             }
-            cost = (std::max)(0.0f, cost);
+            cost = (std::max)(0.0f, cost) * PEPE_costMult(blocker,"APB_ArrowBlockCost");;
             auto* values = blocker->AsActorValueOwner();
             if (!values || values->GetActorValue(RE::ActorValue::kStamina) < cost) {
                 return false;
@@ -368,7 +408,7 @@ class hooks {
                     actor->NotifyAnimationGraph("BlockHitStart");
                     return;
                 }
-                const float reduction = blockedFraction(actor, profile);
+                const float reduction = blockedFraction(actor, profile, false);
                 if (reduction <= 0.0f) {
                     return;
                 }
@@ -425,7 +465,7 @@ class hooks {
                             if (!spellDamageReductionEnabled(actor, profile, cfg)) {
                                 playSpellBlockAnimation(actor, flame);
                             } else {
-                                const float reduction = blockedFraction(actor, profile);
+                                const float reduction = blockedFraction(actor, profile, true);
                                 if (reduction > 0.0f) {
                                     auto costs = spellCosts(actor, profile, cfg);
                                     if (flame) {
