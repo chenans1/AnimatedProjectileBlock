@@ -40,6 +40,11 @@ namespace {
         return std::isfinite(value) ? std::clamp(value, 0.0f, 250.0f) : fallback;
     }
 
+    float readBlockSkillPercent(const CSimpleIniA& ini, const char* section, const char* key, float fallback) {
+        const float value = static_cast<float>(ini.GetDoubleValue(section, key, fallback));
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 10.0f) : fallback;
+    }
+
     void writeBool(CSimpleIniA& ini, const char* section, const char* key, bool value) {
         ini.SetBoolValue(section, key, value);
     }
@@ -93,6 +98,7 @@ namespace settings {
         }
 
         loaded.log = readBool(ini, general, "log", loaded.log);
+        loaded.blockSkillPercentPerLevel = readBlockSkillPercent(ini, general, "blockSkillPercentPerLevel", loaded.blockSkillPercentPerLevel);
 
         loaded.playerWeaponArrowEnabled = readBool(ini, player, "weaponArrowEnabled", loaded.playerWeaponArrowEnabled);
         loaded.playerShieldArrowEnabled = readBool(ini, player, "shieldArrowEnabled", loaded.playerShieldArrowEnabled);
@@ -150,6 +156,7 @@ namespace settings {
         (void)ini.LoadFile(iniPath);  // Preserve any keys added by other versions.
 
         writeBool(ini, general, "log", current.log);
+        writeFactor(ini, general, "blockSkillPercentPerLevel", current.blockSkillPercentPerLevel);
 
         writeBool(ini, player, "weaponArrowEnabled", current.playerWeaponArrowEnabled);
         writeBool(ini, player, "shieldArrowEnabled", current.playerShieldArrowEnabled);
@@ -314,6 +321,31 @@ namespace settings {
         FinishMenuPage(current, changed);
     }
 
+    void __stdcall RenderBlockCalculationPage() {
+        config current = Get();
+        bool changed = false;
+
+        ImGuiMCP::TextUnformatted("Block skill scaling");
+        changed |= ImGuiMCP::SliderFloat(
+            "% increased base damage blocked per level of actor's Block skill",
+            &current.blockSkillPercentPerLevel,
+            0.0f,
+            10.0f,
+            "%.1f%%");
+
+        ImGuiMCP::Separator();
+        ImGuiMCP::TextUnformatted("Damage blocked fraction =");
+        ImGuiMCP::TextUnformatted("(fShieldBaseFactor or fBlockWeaponBase)");
+        ImGuiMCP::TextUnformatted("x (1 + Block skill x skill percentage per level / 100)");
+        ImGuiMCP::TextUnformatted("x Fortify Block effects (1 + BlockModifier / 100)");
+        ImGuiMCP::TextUnformatted("x Mod Percent Blocked perk entry point");
+        ImGuiMCP::TextUnformatted("x APB_kModArrowBlock or APB_kModSpellBlock entry point");
+        ImGuiMCP::TextUnformatted("x matching weapon/shield arrow/spell effectiveness setting");
+        ImGuiMCP::TextUnformatted("The result is clamped to fBlockMax.");
+
+        FinishMenuPage(current, changed);
+    }
+
     void RegisterMenu() {
         if (!SKSEMenuFramework::IsInstalled()) {
             SKSE::log::info("[settings] SKSE Menu Framework is not installed; INI settings remain available");
@@ -328,6 +360,7 @@ namespace settings {
         }
         SKSEMenuFramework::SetSection("Animated Projectile Block");
         SKSEMenuFramework::AddSectionItem("Block Effectiveness", RenderMenuPage);
+        SKSEMenuFramework::AddSectionItem("Block Calculation", RenderBlockCalculationPage);
         SKSEMenuFramework::AddSectionItem("Resource Costs", RenderCostsPage);
         SKSEMenuFramework::AddSectionItem("Animation Only", RenderAnimationPage);
         SKSE::log::info("[settings] Registered SKSE Menu Framework pages");

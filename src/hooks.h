@@ -255,13 +255,16 @@ class hooks {
 
         //calculates how much to block
         static float blockedFraction(RE::Actor* actor, const BlockProfile& profile, bool isSpell) {
+            const settings::config& cfg = settings::Get();
+
             // The GMST supplies the starting block value. not factoring in attacker base weapon damage or the spell damage incoming.
             float blockBase = profile.shield ? blockSetting("fShieldBaseFactor", 0.45f) : blockSetting("fBlockWeaponBase", 0.30f);
             const float blockSkill =(std::max)(0.0f, actor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kBlock));
             // fBlockSkillBase and fBlockSkillMult are unused as far as I can tell
             // const float skillFactor = blockSetting("fBlockSkillBase", 1.0f) + (blockSkill/100.0f) * blockSetting("fBlockSkillMult", 1.5f);
             // SKSE::log::info("[blockedFraction]: fBlockSkillBase={} fBlockSkillMult={}", blockSetting("fBlockSkillBase", 1.0f), blockSetting("fBlockSkillMult", 1.5f));
-            const float skillFactor = 1+blockSkill*0.015f;
+            const float skillPercentPerLevel = std::clamp(cfg.blockSkillPercentPerLevel, 0.0f, 10.0f);
+            const float skillFactor = 1.0f + blockSkill * (skillPercentPerLevel / 100.0f);
             //fortify block 10% translates to 10 av with in game inspection, so 1+(av/100) - value defaults to 0
             const float blockMod = 1+(actor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kBlockModifier))/100;
             float block = blockBase * skillFactor * blockMod;
@@ -269,9 +272,9 @@ class hooks {
             const float cap = std::clamp(blockSetting("fBlockMax", 0.85f), 0.0f, 1.0f);
             const float PEPEMultiplier = projectilePerkMultiplier(actor, isSpell ? "APB_kModSpellBlock" : "APB_kModArrowBlock");
             
-            if (settings::Get().log) {
-                SKSE::log::info("[blockedFraction]: blockBase={} blockskill={} skillFactor={} blockMod={} block={} * PEPEMult={} ", 
-                    blockBase, blockSkill, skillFactor, blockMod, block, PEPEMultiplier);
+            if (cfg.log) {
+                SKSE::log::info("[blockedFraction]: blockBase={} blockskill={} skillPercentPerLevel={} skillFactor={} blockMod={} block={} * PEPEMult={} ",
+                    blockBase, blockSkill, skillPercentPerLevel, skillFactor, blockMod, block, PEPEMultiplier);
             }
             // return std::clamp(block, 0.0f, cap) * std::clamp(profile.factor, 0.0f, 1.0f);
             return std::clamp(block*PEPEMultiplier*profile.factor, 0.0f, cap);

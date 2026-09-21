@@ -5,6 +5,8 @@
 namespace settings {
     struct config {
         bool log = true;
+        // Percentage increase to the base blocked fraction per Block skill level.
+        float blockSkillPercentPerLevel = 1.5f;
 
         bool playerWeaponArrowEnabled = true;
         bool playerShieldArrowEnabled = true;
@@ -71,4 +73,5 @@ namespace settings {
     void __stdcall RenderMenuPage();
     void __stdcall RenderCostsPage();
     void __stdcall RenderAnimationPage();
+    void __stdcall RenderBlockCalculationPage();
 }
