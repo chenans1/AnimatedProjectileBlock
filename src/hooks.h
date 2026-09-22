@@ -1,34 +1,46 @@
 #pragma once
 
+#include <atomic>
+#include <charconv>
+#include <cctype>
+#include "settings.h"
+#include "extern/PerkEntryPointExtenderAPI.h"
+#include "extern/STBL_API.h"
+
 class hooks {
     //logic adapted from valhalla combat, hooks adapted from arrowInterpreter. 
-    //not doing flame projectile for now - it would require interrupting the caster
-    //with maxsu block hit overhaul if you block a flame projectile you would literally never be able to move.
     public: 
         static inline void install() {
             SKSE::log::info("[hooks] attempting hooking projectile addimpact functions");
-
             {
                 REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_ArrowProjectile[0]};
                 _originalArrow = vtable.write_vfunc(0xBD, AddImpactProj);
             }
 
-            {
-                REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_MissileProjectile[0]};
-                _originalMissile = vtable.write_vfunc(0xBD, AddImpactMissile);
+            SKSE::log::info("[hooks] attempting hooking projectile ApplyProjectileSpell");
+
+            auto& trampoline = SKSE::GetTrampoline();
+            // originalApply = trampoline.write_call<5>(REL::RelocationID(42943, 44123).address() + REL::Relocate(0x31C, 0x312), ApplyProjectileSpell); probably fired off for arrow enchantments
+            // originalApply = trampoline.write_call<5>(REL::Relocation<std::uintptr_t>{ REL::Offset(0x7EC608) }.address(), ApplyProjectileSpell); hard coded ae address of working call 
+            originalApply = trampoline.write_call<5>(REL::RelocationID(43015, 44206).address() + REL::Relocate(0x216, 0x218), ApplyProjectileSpell);
+            SKSE::log::info("[Hooks] originalApply at address: 0x{:X}", originalApply.address());
+            // projectileHooksInstalled = true;
+            SKSE::log::info("[hooks] Finished hooks");
+        }
+
+        static void InstallSetEffectiveness() {
+            if (originalSetEffectiveness.address()) {
+                return;
             }
 
-            {
-                REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_BeamProjectile[0]};
-                _originalBeam = vtable.write_vfunc(0xBD, AddImpactBeam);
-            }
+            REL::Relocation<std::uintptr_t> checkAddEffect{
+                RELOCATION_ID(33763, 34547), REL::VariantOffset(0x4A3, 0x656, 0x427)
+            };
+            const auto callSite = checkAddEffect.address();
 
-            {
-                REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_FlameProjectile[0]};
-                _originalFlame = vtable.write_vfunc(0xBD, AddImpactFlame);
-            }
-
-            SKSE::log::info("[hooks] attempting hooking projectile addimpact functions");
+            originalSetEffectiveness = SKSE::GetTrampoline().write_call<5>(callSite, SetEffectiveness);
+            SKSE::log::info("[hooks] SetEffectiveness installed at 0x{:X}; previous target 0x{:X}",
+                callSite, originalSetEffectiveness.address());
         }
 
         static inline bool LoadForms() {
@@ -42,128 +54,364 @@ class hooks {
                 return false;
             }
             SKSE::log::info("Sucessfully loaded enchant cd forms: spell={}, effect={}", static_cast<void*>(cooldownSpell), static_cast<void*>(cooldownEffect));
+            
+            ArrowBlockerSpell = dataHandler->LookupForm<RE::SpellItem>(0x803, "AnimatedProjectileBlocking.esp");
+            ArrowAttackerSpell = dataHandler->LookupForm<RE::SpellItem>(0x805, "AnimatedProjectileBlocking.esp");
+            SpellBlockerSpell = dataHandler->LookupForm<RE::SpellItem>(0x807, "AnimatedProjectileBlocking.esp");
+            SpellAttackerSpell = dataHandler->LookupForm<RE::SpellItem>(0x809, "AnimatedProjectileBlocking.esp");
+
+            if (!ArrowBlockerSpell || !ArrowAttackerSpell || !SpellBlockerSpell || !SpellAttackerSpell) {
+                SKSE::log::error("Failed to load attacker/blocker spell forms: ArrowBlockerSpell={}, ArrowAttackerSpell={}, SpellBlockerSpell={}, SpellAttackerSpell={}", 
+                    static_cast<void*>(ArrowBlockerSpell), static_cast<void*>(ArrowAttackerSpell), static_cast<void*>(SpellBlockerSpell), static_cast<void*>(SpellAttackerSpell));
+                return false;
+            }
+
+            SKSE::log::info("Successfully loaded arrow/spell attacker/blocker spell forms: ArrowBlockerSpell={}, ArrowAttackerSpell={}, SpellBlockerSpell={}, SpellAttackerSpell={}", 
+                    static_cast<void*>(ArrowBlockerSpell), static_cast<void*>(ArrowAttackerSpell), static_cast<void*>(SpellBlockerSpell), static_cast<void*>(SpellAttackerSpell));
+
+            const auto cfg = settings::Get();
+            playerWeaponArrowPerk = loadPerkRequirement(cfg.playerWeaponArrowPerkRequirement, "weapon arrow");
+            playerShieldArrowPerk = loadPerkRequirement(cfg.playerShieldArrowPerkRequirement, "shield arrow");
+            playerWeaponSpellPerk = loadPerkRequirement(cfg.playerWeaponSpellPerkRequirement, "weapon spell");
+            playerShieldSpellPerk = loadPerkRequirement(cfg.playerShieldSpellPerkRequirement, "shield spell");
             return true;
         }
-        
-    private: 
+
+        static void requestSTBL() {
+            stbl = STBL_API::RequestInterface();
+            if (stbl) {
+                SKSE::log::info("Simple Timed Block API acquired");
+            } else {
+                SKSE::log::info("Simple Timed Block - tweaked not available; using normal behavior");
+            }
+        }
+
+    private:
+        static inline STBL_API::STBL* stbl = nullptr;
+
+        static inline RE::SpellItem* cooldownSpell = nullptr;       // 0x800
+        static inline RE::EffectSetting* cooldownEffect = nullptr;  // 0x801
+
+        static inline RE::SpellItem* ArrowBlockerSpell = nullptr; // 0x803 attacker casts this spell on the blocker
+        static inline RE::SpellItem* ArrowAttackerSpell = nullptr; // 0x805 blocker casts this spell on the attacker
+        static inline RE::SpellItem* SpellBlockerSpell = nullptr;  // 0x807 attacker casts this spell on the blocker
+        static inline RE::SpellItem* SpellAttackerSpell = nullptr; // 0x809 blocker casts this spell on the attacker
+
+        struct PerkRequirement {
+            bool configured = false;
+            RE::BGSPerk* perk = nullptr;
+        };
+
+        static inline PerkRequirement playerWeaponArrowPerk;
+        static inline PerkRequirement playerShieldArrowPerk;
+        static inline PerkRequirement playerWeaponSpellPerk;
+        static inline PerkRequirement playerShieldSpellPerk;
+
+        static PerkRequirement loadPerkRequirement(std::string_view setting, std::string_view context);
+
+        struct Hit {
+            RE::ObjectRefHandle target;
+            RE::MagicItem* spell;
+            float remainingDamage;
+            // bool shield;
+        };
+
+        struct HitScope {
+            std::optional<Hit> previous;
+            explicit HitScope(std::optional<Hit> hit) : 
+                previous(std::exchange(currentHit, std::move(hit)))
+            {}
+            ~HitScope()
+            {
+                currentHit = std::move(previous);
+            }
+        };
+
+        static inline thread_local std::optional<Hit> currentHit;
+
+        struct BlockProfile {
+            bool enabled;
+            float factor;
+            bool shield;
+            const PerkRequirement* perkRequirement;
+        };
+
+        static BlockProfile getBlockProfile(RE::Actor* actor, bool spell, const settings::config& cfg);
+
+        static bool hasRequiredPerk(RE::Actor* actor, const BlockProfile& profile);
+
+        enum class BlockMode {
+            kDisabled,
+            kAnimationOnly,
+            kDamageReduction
+        };
+
+        static BlockMode getBlockMode(RE::Actor* actor, const BlockProfile& profile, bool damageReductionEnabled);
+
+        static bool spellDamageReductionEnabled(RE::Actor* actor, const BlockProfile& profile, const settings::config& cfg);
+
+        static bool arrowDamageReductionEnabled(RE::Actor* actor, const BlockProfile& profile, const settings::config& cfg);
+
+        static float projectilePerkMultiplier(RE::Actor* actor, std::string_view category);
+
+        static float blockSetting(const char* name, float fallback);
+
+        //calculates how much to block
+        static float blockedFraction(RE::Actor* actor, const BlockProfile& profile, bool isSpell);
+
+        struct SpellCosts {
+            float stamina;
+            float magicka;
+            float flameMultiplier;
+        };
+
+        static SpellCosts spellCosts(RE::Actor* actor, const BlockProfile& profile, const settings::config& cfg);
+        static float PEPE_costMult(RE::Actor* actor, std::string_view category);
+
+        static bool tryConsumeSpellBlockResources(RE::Actor* blocker, float staminaCost, float magickaCost);
+
         //cooldown to not excessively make actors play blockhit animations
-        static bool applyCD(RE::Actor* actor) {
-            if (!actor || !cooldownSpell || !cooldownEffect) {
-                return false;
-            }
-            auto* magicTarget = actor->GetMagicTarget();
-            if (!magicTarget) {
-                return false;
-            }
+        static bool applyCD(RE::Actor* actor);
 
-            if (magicTarget->HasMagicEffect(cooldownEffect)) {
-                return false;
-            }
+        static void castContextSpell(RE::Actor* a_caster, RE::Actor* a_target, RE::SpellItem* a_spell);
 
-            if (auto* caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant)) {
-                // SKSE::log::info("[EnchantCooldown] applying cooldown spell");
-                caster->CastSpellImmediate(cooldownSpell, true, actor, 1.0f, false, 0.0f, actor);
-                return true;
+        static void awardBlockExperience(RE::Actor* blocker, float incomingDamage);
 
-            }
-            return false;
-        }
+        static void sendBlockModEvent(RE::Actor* blocker, RE::Actor* attacker, bool isSpell);
         
-        //gonna do this via velocity check instead, I think. Using dot product to check for projectile heading to calculate if it's
-        //within the block angle cone. 
-        static bool checkBlockAngle(RE::Actor* actor, RE::Projectile* projectile) {
-            auto* gameSettings = RE::GameSettingCollection::GetSingleton();
-            auto* gmst = gameSettings ? gameSettings->GetSetting("fCombatHitConeAngle") : nullptr;
-            if (gmst) {
-                float projX;
-                float projY;
-                const float fCombatHitConeAngle = gmst->GetFloat();
-                if (projectile->formType == RE::FormType::ProjectileFlame) {
-                    //flame projs have no velocity. I'm going to check for the actual beam heading instead.
-                    const float heading = projectile->GetAngleZ();
-                    // SKSE::log::info("[checkBlockAngle]: flame projectile heading: {}", heading);
-                    projX = std::sin(heading);
-                    projY = std::cos(heading);
-                } else {
-                    const auto& v = projectile->GetProjectileRuntimeData().velocity;
-                    projX = v.x;
-                    projY = v.y;
-                    // SKSE::log::info("[checkBlockAngle]: not flame projectile: [{}, {}]", v.x, v.y);
-                }
-                
-                const float horizontalSpeed = std::hypot(projX, projY);
-                if (horizontalSpeed < 0.0001f) {
-                    SKSE::log::info("[checkBlockAngle]: negligeble horizontal speed: {}", horizontalSpeed);
-                    return false;
-                }
-                
-                const float blockerAngle = actor->GetAngleZ();
-                const float dotProduct = std::sin(blockerAngle) * (-projX / horizontalSpeed) + std::cos(blockerAngle) * (-projY / horizontalSpeed);
-                SKSE::log::info("[checkBlockAngle] angle: {}/{}", std::acos(std::clamp(dotProduct, -1.0f, 1.0f)) * 180.0f/3.1415927f, fCombatHitConeAngle);
-                return dotProduct >= std::cos(fCombatHitConeAngle * 3.1415927f/180.0f);
-            }
-            return false;
-        }
+        static bool playSpellBlockAnimation(RE::Actor* actor, bool flame);
 
-        static void performProjectileBlock(RE::Actor* blocker, RE::Projectile* projectile) {
-            if (!blocker || !projectile) {
-                return;
-            }
+        //gonna do this via velocity check instead, I think. Using dot product to check for projectile heading compared to actor heading and blockangle
+        static bool checkBlockAngle(RE::Actor* actor, RE::Projectile* projectile);
+        
+        static bool tryConsumeArrowBlockStamina(RE::Actor* blocker, float incomingDamage, const settings::config& cfg, float& cost);
 
-            if (!checkBlockAngle(blocker, projectile) || !blocker->IsBlocking()) {
-                return;
-            }
-
-            if (projectile->formType == RE::FormType::ProjectileFlame) {
-                if (!applyCD(blocker)) {
-                    // SKSE::log::info("[performProjectileBlock]: flame projectile blocker has CD effect");
-                    return; 
-                }
-            }
-            blocker->NotifyAnimationGraph("BlockHitStart");
-            
-        }
-
-        static void processProjectileCollision(RE::Projectile* a_projectile, RE::TESObjectREFR* a_ref) { 
+        static void processArrowCollision(RE::Projectile* a_projectile, RE::TESObjectREFR* a_ref) { 
             // SKSE::log::info("[processProjCollision]");
             if (!a_projectile || !a_ref) {
                 return;
             }
             if (a_ref->formType == RE::FormType::ActorCharacter) {
-                performProjectileBlock(a_ref->As<RE::Actor>(), a_projectile);
+                auto* actor = a_ref->As<RE::Actor>();
+                if (!actor) {
+                    return;
+                }
+                const auto cfg = settings::Get();
+                const auto profile = getBlockProfile(actor, false, cfg);
+                if (!actor->IsBlocking() || !checkBlockAngle(actor, a_projectile)) {
+                    return;
+                }
+                auto& rd = a_projectile->GetProjectileRuntimeData();
+                auto* attackerRef = rd.shooter.get().get();
+                auto* attacker = attackerRef ? attackerRef->As<RE::Actor>() : nullptr;
+                const auto mode = getBlockMode(actor, profile, arrowDamageReductionEnabled(actor, profile, cfg));
+                const float incomingDamage = rd.weaponDamage;
+                float staminaCost = 0.0f;
+                //stbl integration, for overcap timed block. For undercap timed block damage reduction api is not needed - i will consider hit data modification some day for native compat?
+                if (stbl && actor->IsPlayerRef()) {
+                    const STBL_API::TimedBlockRequest request{STBL_API::AttackType::Arrow, attacker, actor};
+                    const auto isTimedBlocking = stbl->CanTimedBlock(request);
+                    if (isTimedBlocking.outcome != STBL_API::TimedBlockOutcome::NotTriggered) {
+                        if (tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
+                            if (cfg.log) {
+                                SKSE::log::info("[processArrowCollision] arrow timed block success");
+                            }
+                            actor->NotifyAnimationGraph("BlockHitStart");
+                            //we accept 0 reduction here. in this case purely timed block DR from STBL applies
+                            const float reduction = mode == BlockMode::kDamageReduction ? blockedFraction(actor, profile, false) : 0.0f;
+                            rd.weaponDamage = incomingDamage * (1.0f - reduction) * (isTimedBlocking.damageMultiplier);
+                            awardBlockExperience(actor, incomingDamage);
+                            stbl->TriggerTimedBlock(request);
+                            if (attacker) {
+                                castContextSpell(actor, attacker, ArrowBlockerSpell);
+                                castContextSpell(attacker, actor, ArrowAttackerSpell);
+                                sendBlockModEvent(actor, attacker, false);
+                            }
+                            return;
+                        }
+                    }
+                }
+
+                if (mode == BlockMode::kDisabled) {
+                    return;
+                }
+                if (mode == BlockMode::kAnimationOnly) {
+                    actor->NotifyAnimationGraph("BlockHitStart");
+                    return;
+                }
+                const float reduction = blockedFraction(actor, profile, false);
+                if (reduction <= 0.0f) {
+                    return;
+                }
+
+                if (!tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
+                    if (cfg.log) {
+                        SKSE::log::info("[processArrowCollision] arrow block failed: target={} stamina={} required={}",
+                            static_cast<void*>(actor), actor->GetActorValue(RE::ActorValue::kStamina), staminaCost);
+                    }
+                    return;
+                }
+
+                actor->NotifyAnimationGraph("BlockHitStart");
+                rd.weaponDamage = incomingDamage * (1.0f - reduction);
+                awardBlockExperience(actor, incomingDamage);
+
+                if (attacker) {
+                    castContextSpell(actor, attacker, ArrowBlockerSpell);
+                    castContextSpell(attacker, actor, ArrowAttackerSpell);
+                    sendBlockModEvent(actor, attacker, false);
+                }
+                if (cfg.log) {
+                    SKSE::log::info("[processArrowCollision] projectile={} target={} reduction={} staminaCost={} remainingWeaponDamage={}",
+                        static_cast<void*>(a_projectile), static_cast<void*>(a_ref), reduction, staminaCost, rd.weaponDamage);
+                }
             }
         }
 
         //need to hook specific vtable funcs, hooking the base vfunc doesnt work.
         static RE::Projectile::ImpactData* AddImpactProj(RE::ArrowProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
             // SKSE::log::info("[AddImpactProj]");
-            processProjectileCollision(a_projectile, a_ref);
+            processArrowCollision(a_projectile, a_ref);
             return _originalArrow(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
         }
 
-        static RE::Projectile::ImpactData* AddImpactMissile(RE::MissileProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
-            // SKSE::log::info("[AddImpactMissile]");
-            processProjectileCollision(a_projectile, a_ref);
-            return _originalMissile(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
-        }
-        
-        static RE::Projectile::ImpactData* AddImpactBeam(RE::BeamProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
-            // SKSE::log::info("[AddImpactBeam]");
-            processProjectileCollision(a_projectile, a_ref);
-            return _originalBeam(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
-        }
-
-        static RE::Projectile::ImpactData* AddImpactFlame(RE::FlameProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
-            // SKSE::log::info("[AddImpactFlame]");
-            processProjectileCollision(a_projectile, a_ref);
-            return _originalFlame(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
-        }
-
         static inline REL::Relocation<decltype(AddImpactProj)> _originalArrow;
-        static inline REL::Relocation<decltype(AddImpactMissile)> _originalMissile;
-        static inline REL::Relocation<decltype(AddImpactBeam)> _originalBeam;
-        static inline REL::Relocation<decltype(AddImpactFlame)> _originalFlame;
 
-        static inline RE::SpellItem* cooldownSpell = nullptr;       // 0x800
-        static inline RE::EffectSetting* cooldownEffect = nullptr;  // 0x801
-};  
+        //it turns out this function - which applies the spell effects from projectile collision - actually runs before the addimpact() for projectiles, super convenient
+        //it also turns out in the same synchronous call, setEffectiveness is called. 
+        static void ApplyProjectileSpell(RE::MagicCaster* caster, const RE::NiPoint3* impactPos, RE::Projectile* projectile, RE::TESObjectREFR* target, float arg5, float arg6, std::uint8_t arg7, std::uint8_t arg8) {
+            // SKSE::log::info("[ApplyProjectileSpell] ENTER: projectile={} target={} blocked={}", static_cast<void*>(projectile), static_cast<void*>(target), currentHit.has_value());
+            std::optional<Hit> hit;
+            if (projectile && target) {
+                if (auto* actor = target->As<RE::Actor>()) {
+                    if (actor->IsBlocking() && checkBlockAngle(actor, projectile)) {
+                        const auto cfg = settings::Get();
+                        const auto profile = getBlockProfile(actor, true, cfg);
+                        auto* spell = projectile->GetProjectileRuntimeData().spell;
+                        if (!spell) {
+                            HitScope scope(std::move(hit));
+                            originalApply(caster, impactPos, projectile, target, arg5, arg6, arg7, arg8);
+                            return;
+                        }
+                        const bool flame = projectile->formType == RE::FormType::ProjectileFlame;
+                        const auto mode = getBlockMode(actor, profile, spellDamageReductionEnabled(actor, profile, cfg));
+                        auto* attacker = caster ? caster->GetCasterAsActor() : nullptr;
+                        auto costs = spellCosts(actor, profile, cfg);
+                        if (flame) {
+                            const float scale = std::clamp(costs.flameMultiplier, 0.0f, 5.0f);
+                            costs.stamina *= scale;
+                            costs.magicka *= scale;
+                        }
+                        //stbl integration, for overcap timed block. For undercap timed block damage reduction api is not needed - i will consider hit data modification some day for native compat?
+                        if (stbl && actor->IsPlayerRef()) {
+                            const STBL_API::TimedBlockRequest request{STBL_API::AttackType::Spell, attacker, actor};
+                            const auto isTimedBlocking = stbl->CanTimedBlock(request);
+                            if (isTimedBlocking.outcome != STBL_API::TimedBlockOutcome::NotTriggered) {
+                                if (tryConsumeSpellBlockResources(actor, costs.stamina, costs.magicka) && actor->IsPlayerRef()) {
+                                    if (cfg.log) {
+                                        SKSE::log::info("[ApplyProjectileSpell] spell timed block success");
+                                    }
+                                    //always damage reduction, but not always return the simple timed block event to avoid spam - only if blockhit
+                                    const float reduction = mode == BlockMode::kDamageReduction ? blockedFraction(actor, profile, false) : 0.0f;
+                                    hit = Hit{target->GetHandle(), spell, (1.0f - reduction) * (isTimedBlocking.damageMultiplier)};
+                                    if (playSpellBlockAnimation(actor, flame)){
+                                        //block experience should work - it's always being called anyways, and with stbl it overwrites the damage reduction.
+                                        stbl->TriggerTimedBlock(request);
+                                        if (attacker) {
+                                            castContextSpell(actor, attacker, SpellBlockerSpell);
+                                            castContextSpell(attacker, actor, SpellAttackerSpell);
+                                            sendBlockModEvent(actor, attacker, true);
+                                        }
+                                    }
+                                    HitScope scope(std::move(hit));
+                                    originalApply(caster, impactPos, projectile, target, arg5, arg6, arg7, arg8);
+                                    return;
+                                }
+                            }
+                        }
+
+                        if (mode == BlockMode::kAnimationOnly) {
+                            playSpellBlockAnimation(actor, flame);
+                        } else if (mode == BlockMode::kDamageReduction) {
+                            const float reduction = blockedFraction(actor, profile, true);
+                            if (reduction > 0.0f) {
+                                const bool paid = tryConsumeSpellBlockResources(actor, costs.stamina, costs.magicka);
+                                if (cfg.log && (!flame || !paid)) {
+                                    SKSE::log::info("[ApplyProjectileSpell] spell block {}: target={} staminaCost={} magickaCost={}",
+                                        paid ? "paid" : "failed", static_cast<void*>(actor), costs.stamina, costs.magicka);
+                                }
+                                if (paid) {
+                                    hit = Hit{target->GetHandle(), spell, 1.0f - reduction};
+                                    if (playSpellBlockAnimation(actor, flame)) {
+                                        if (attacker) {
+                                            castContextSpell(actor, attacker, SpellBlockerSpell);
+                                            castContextSpell(attacker, actor, SpellAttackerSpell);
+                                            sendBlockModEvent(actor, attacker, true);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                    }
+                }
+            }
+            HitScope scope(std::move(hit));
+            originalApply(caster, impactPos, projectile, target, arg5, arg6, arg7, arg8);
+            // SKSE::log::info("[ApplyProjectileSpell] EXIT: projectile={} target={} blocked={}", static_cast<void*>(projectile), static_cast<void*>(target), currentHit.has_value());
+        }
+
+        static void SetEffectiveness(RE::ActiveEffect* effect, float power, bool onlyHostile) {
+            originalSetEffectiveness(effect, power, onlyHostile);
+            if (!currentHit || !effect) {
+                // SKSE::log::info("[SetEffectiveness] No currentHit");
+                return;
+            }
+            // Must belong to the spell from the blocked projectile.
+            if (effect->spell != currentHit->spell) {
+                if (settings::Get().log) {
+                    SKSE::log::info("[SetEffectiveness] effect spell: {} is not currenthit spell: {}", static_cast<void*>(effect->spell), static_cast<void*>(currentHit->spell));
+                }
+                return;
+            }
+            //only affect damage to H/M/S
+            const auto* baseEffect = effect->GetBaseObject();
+            constexpr auto isVitalActorValue = [](RE::ActorValue value) {
+                return value == RE::ActorValue::kHealth || value == RE::ActorValue::kStamina || value == RE::ActorValue::kMagicka;
+            };
+            const bool damageHMS = effect->IsCausingHealthDamage() || (baseEffect && baseEffect->IsDetrimental() && (isVitalActorValue(baseEffect->data.primaryAV) || isVitalActorValue(baseEffect->data.secondaryAV)));
+            if (!damageHMS) {
+                if (settings::Get().log) {
+                    SKSE::log::info("[SetEffectiveness] effect does not damage Health, Stamina or Magicka");
+                }
+                return;
+            }
+            // MagicTarget is a secondary base of Actor. Ask it for the owning reference instead of reinterpreting its address as an Actor*.
+            auto* victimRef = effect->target ? effect->target->GetTargetStatsObject() : nullptr;
+            if (!victimRef || !victimRef->As<RE::Actor>()) {
+                if (settings::Get().log) {
+                    SKSE::log::info("[SetEffectiveness]: unusable victimref");
+                }
+                return;
+            }
+            const auto victimHandle = victimRef->GetHandle();
+            if (victimHandle != currentHit->target) {
+                if (settings::Get().log) {
+                    SKSE::log::info("[SetEffectiveness] target mismatch: effect target {:08X} (handle {:08X}), impact handle {:08X}", victimRef->GetFormID(), victimHandle.native_handle(), currentHit->target.native_handle());
+                }
+                return;
+            }
+            const float oldMagnitude = effect->magnitude;
+            effect->magnitude *= currentHit->remainingDamage;
+            if (auto* victim = victimRef->As<RE::Actor>()) {
+                awardBlockExperience(victim, oldMagnitude);
+            }
+
+            if (settings::Get().log) {
+                SKSE::log::info("[SetEffectiveness] blocked spell effect={} magnitude {} -> {}", static_cast<void*>(effect), oldMagnitude, effect->magnitude);
+            }
+
+        }
+        static inline REL::Relocation<decltype(ApplyProjectileSpell)> originalApply;
+        static inline REL::Relocation<decltype(SetEffectiveness)> originalSetEffectiveness;
+};

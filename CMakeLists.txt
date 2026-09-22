@@ -3,7 +3,7 @@
 cmake_minimum_required (VERSION 3.19)
 
 # Set your project name. This will be the name of your SKSE .dll file.
-project(AnimatedProjectileBlock VERSION 0.0.1 LANGUAGES CXX)
+project(zAnimatedProjectileBlock VERSION 0.0.1 LANGUAGES CXX)
 
 set(OUTPUT_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}/output")
 
@@ -27,6 +27,9 @@ set(SOURCES
     src/PCH.h
     src/plugin.cpp
     src/hooks.h
+    src/hooks.cpp
+    src/settings.h
+    src/settings.cpp
 )
 
 add_commonlibsse_plugin(
@@ -38,6 +41,9 @@ target_compile_features(
     ${PROJECT_NAME}
     PRIVATE cxx_std_23
 )
+
+# The SKSE Menu Framework header uses a wide DLL name with GetModuleHandle.
+target_compile_definitions(${PROJECT_NAME} PRIVATE UNICODE _UNICODE)
 
 target_precompile_headers(
     ${PROJECT_NAME}

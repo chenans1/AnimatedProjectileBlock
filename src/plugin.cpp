@@ -1,6 +1,7 @@
 #include "PCH.h"
 
 #include "hooks.h"
+#include "settings.h"
 
 #include <Windows.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -46,12 +47,23 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     auto version = plugin->GetVersion();
     log::info("{} {} is loading...", plugin->GetName(), version);
     SKSE::Init(skse);
+    settings::Load();
+    SKSE::AllocTrampoline(28);
     hooks::install();
     SKSE::GetMessagingInterface()->RegisterListener([](SKSE::MessagingInterface::Message* msg) {
         switch (msg->type) {
+            case SKSE::MessagingInterface::kPostLoad:
+                settings::RegisterMenu();
+                break;
             case SKSE::MessagingInterface::kDataLoaded:
                 hooks::LoadForms();
+                hooks::InstallSetEffectiveness();
+                hooks::requestSTBL();
                 break;
+            // case SKSE::MessagingInterface::kPostLoadGame:
+            // case SKSE::MessagingInterface::kNewGame:
+            //     hooks::install();
+            //     break;
             }
     });
     log::info("{} has finished loading.", plugin->GetName());
