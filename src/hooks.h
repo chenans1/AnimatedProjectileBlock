@@ -77,8 +77,18 @@ class hooks {
             return true;
         }
 
+        static void requestSTBL() {
+            stbl = STBL_API::RequestInterface();
+            if (stbl) {
+                SKSE::log::info("Simple Timed Block API acquired");
+            } else {
+                SKSE::log::info("Simple Timed Block - tweaked not available; using normal behavior");
+            }
+        }
+
     private:
-        
+        static inline STBL_API::STBL* stbl = nullptr;
+
         static inline RE::SpellItem* cooldownSpell = nullptr;       // 0x800
         static inline RE::EffectSetting* cooldownEffect = nullptr;  // 0x801
 
@@ -191,6 +201,37 @@ class hooks {
                 if (!actor->IsBlocking() || !checkBlockAngle(actor, a_projectile)) {
                     return;
                 }
+                auto& rd = a_projectile->GetProjectileRuntimeData();
+                auto* attackerRef = rd.shooter.get().get();
+                auto* attacker = attackerRef ? attackerRef->As<RE::Actor>() : nullptr;
+
+                const float incomingDamage = rd.weaponDamage;
+                float staminaCost = 0.0f;
+                const float reduction = blockedFraction(actor, profile, false);
+                //stbl integration, for overcap timed block. For undercap timed block damage reduction api is not needed - i will consider hit data modification some day for native compat?
+                if (stbl && actor->IsPlayerRef()) {
+                    const STBL_API::TimedBlockRequest request{STBL_API::AttackType::Arrow, attacker, actor};
+                    const auto isTimedBlocking = stbl->CanTimedBlock(request);
+                    if (isTimedBlocking.outcome != STBL_API::TimedBlockOutcome::NotTriggered) {
+                        if (tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
+                            if (cfg.log) {
+                                SKSE::log::info("[processArrowCollision] arrow timed block success");
+                            }
+                            actor->NotifyAnimationGraph("BlockHitStart");
+                            //we accept 0 reduction here. in this case purely timed block DR from STBL applies
+                            rd.weaponDamage = incomingDamage * (1.0f - reduction) * (isTimedBlocking.damageMultiplier);
+                            awardBlockExperience(actor, incomingDamage);
+                            stbl->TriggerTimedBlock(request);
+                            if (attacker) {
+                                castContextSpell(actor, attacker, ArrowBlockerSpell);
+                                castContextSpell(attacker, actor, ArrowAttackerSpell);
+                                sendBlockModEvent(actor, attacker, false);
+                            }
+                            return;
+                        }
+                    }
+                }
+                
                 const auto mode = getBlockMode(actor, profile, arrowDamageReductionEnabled(actor, profile, cfg));
                 if (mode == BlockMode::kDisabled) {
                     return;
@@ -199,13 +240,11 @@ class hooks {
                     actor->NotifyAnimationGraph("BlockHitStart");
                     return;
                 }
-                const float reduction = blockedFraction(actor, profile, false);
+
                 if (reduction <= 0.0f) {
                     return;
                 }
-                auto& rd = a_projectile->GetProjectileRuntimeData();
-                const float incomingDamage = rd.weaponDamage;
-                float staminaCost = 0.0f;
+
                 if (!tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
                     if (cfg.log) {
                         SKSE::log::info("[processArrowCollision] arrow block failed: target={} stamina={} required={}",
@@ -213,12 +252,11 @@ class hooks {
                     }
                     return;
                 }
+
                 actor->NotifyAnimationGraph("BlockHitStart");
                 rd.weaponDamage = incomingDamage * (1.0f - reduction);
                 awardBlockExperience(actor, incomingDamage);
 
-                auto* attackerRef = rd.shooter.get().get();
-                auto* attacker = attackerRef ? attackerRef->As<RE::Actor>() : nullptr;
                 if (attacker) {
                     castContextSpell(actor, attacker, ArrowBlockerSpell);
                     castContextSpell(attacker, actor, ArrowAttackerSpell);
@@ -240,7 +278,7 @@ class hooks {
 
         static inline REL::Relocation<decltype(AddImpactProj)> _originalArrow;
 
-        //it turns out this function - which applies the spell effects from projectile collision - actually runs before the addimpact() hooks
+        //it turns out this function - which applies the spell effects from projectile collision - actually runs before the addimpact() for projectiles, super convenient
         //it also turns out in the same synchronous call, setEffectiveness is called. 
         static void ApplyProjectileSpell(RE::MagicCaster* caster, const RE::NiPoint3* impactPos, RE::Projectile* projectile, RE::TESObjectREFR* target, float arg5, float arg6, std::uint8_t arg7, std::uint8_t arg8) {
             // SKSE::log::info("[ApplyProjectileSpell] ENTER: projectile={} target={} blocked={}", static_cast<void*>(projectile), static_cast<void*>(target), currentHit.has_value());
@@ -251,39 +289,71 @@ class hooks {
                         const auto cfg = settings::Get();
                         const auto profile = getBlockProfile(actor, true, cfg);
                         auto* spell = projectile->GetProjectileRuntimeData().spell;
-                        if (spell) {
-                            const bool flame = projectile->formType == RE::FormType::ProjectileFlame;
-                            const auto mode = getBlockMode(actor, profile, spellDamageReductionEnabled(actor, profile, cfg));
-                            if (mode == BlockMode::kAnimationOnly) {
-                                playSpellBlockAnimation(actor, flame);
-                            } else if (mode == BlockMode::kDamageReduction) {
-                                const float reduction = blockedFraction(actor, profile, true);
-                                if (reduction > 0.0f) {
-                                    auto costs = spellCosts(actor, profile, cfg);
-                                    if (flame) {
-                                        const float scale = std::clamp(costs.flameMultiplier, 0.0f, 5.0f);
-                                        costs.stamina *= scale;
-                                        costs.magicka *= scale;
+                        if (!spell) {
+                            HitScope scope(std::move(hit));
+                            originalApply(caster, impactPos, projectile, target, arg5, arg6, arg7, arg8);
+                            return;
+                        }
+                        const bool flame = projectile->formType == RE::FormType::ProjectileFlame;
+                        const auto mode = getBlockMode(actor, profile, spellDamageReductionEnabled(actor, profile, cfg));
+                        auto* attacker = caster ? caster->GetCasterAsActor() : nullptr;
+                        const float reduction = blockedFraction(actor, profile, true);
+                        auto costs = spellCosts(actor, profile, cfg);
+                        if (flame) {
+                            const float scale = std::clamp(costs.flameMultiplier, 0.0f, 5.0f);
+                            costs.stamina *= scale;
+                            costs.magicka *= scale;
+                        }
+                        //stbl integration, for overcap timed block. For undercap timed block damage reduction api is not needed - i will consider hit data modification some day for native compat?
+                        if (stbl && actor->IsPlayerRef()) {
+                            const STBL_API::TimedBlockRequest request{STBL_API::AttackType::Spell, attacker, actor};
+                            const auto isTimedBlocking = stbl->CanTimedBlock(request);
+                            if (isTimedBlocking.outcome != STBL_API::TimedBlockOutcome::NotTriggered) {
+                                if (tryConsumeSpellBlockResources(actor, costs.stamina, costs.magicka) && actor->IsPlayerRef()) {
+                                    if (cfg.log) {
+                                        SKSE::log::info("[ApplyProjectileSpell] spell timed block success");
                                     }
-                                    const bool paid = tryConsumeSpellBlockResources(actor, costs.stamina, costs.magicka);
-                                    if (cfg.log && (!flame || !paid)) {
-                                        SKSE::log::info("[ApplyProjectileSpell] spell block {}: target={} staminaCost={} magickaCost={}",
-                                            paid ? "paid" : "failed", static_cast<void*>(actor), costs.stamina, costs.magicka);
+                                    
+                                    //always damage reduction, but not always return the simple timed block event to avoid spam - only if blockhit
+                                    hit = Hit{target->GetHandle(), spell, (1.0f - reduction) * (isTimedBlocking.damageMultiplier)};
+                                    if (playSpellBlockAnimation(actor, flame)){
+                                        //block experience should work - it's always being called anyways, and with stbl it overwrites the damage reduction.
+                                        stbl->TriggerTimedBlock(request);
+                                        if (attacker) {
+                                            castContextSpell(actor, attacker, SpellBlockerSpell);
+                                            castContextSpell(attacker, actor, SpellAttackerSpell);
+                                            sendBlockModEvent(actor, attacker, true);
+                                        }
                                     }
-                                    if (paid) {
-                                        hit = Hit{target->GetHandle(), spell, 1.0f - reduction};
-                                        if (playSpellBlockAnimation(actor, flame)) {
-                                            auto* attacker = caster ? caster->GetCasterAsActor() : nullptr;
-                                            if (attacker) {
-                                                castContextSpell(actor, attacker, SpellBlockerSpell);
-                                                castContextSpell(attacker, actor, SpellAttackerSpell);
-                                                sendBlockModEvent(actor, attacker, true);
-                                            }
+                                    HitScope scope(std::move(hit));
+                                    originalApply(caster, impactPos, projectile, target, arg5, arg6, arg7, arg8);
+                                    return;
+                                }
+                            }
+                        }
+
+                        if (mode == BlockMode::kAnimationOnly) {
+                            playSpellBlockAnimation(actor, flame);
+                        } else if (mode == BlockMode::kDamageReduction) {
+                            if (reduction > 0.0f) {
+                                const bool paid = tryConsumeSpellBlockResources(actor, costs.stamina, costs.magicka);
+                                if (cfg.log && (!flame || !paid)) {
+                                    SKSE::log::info("[ApplyProjectileSpell] spell block {}: target={} staminaCost={} magickaCost={}",
+                                        paid ? "paid" : "failed", static_cast<void*>(actor), costs.stamina, costs.magicka);
+                                }
+                                if (paid) {
+                                    hit = Hit{target->GetHandle(), spell, 1.0f - reduction};
+                                    if (playSpellBlockAnimation(actor, flame)) {
+                                        if (attacker) {
+                                            castContextSpell(actor, attacker, SpellBlockerSpell);
+                                            castContextSpell(attacker, actor, SpellAttackerSpell);
+                                            sendBlockModEvent(actor, attacker, true);
                                         }
                                     }
                                 }
                             }
                         }
+                        
                     }
                 }
             }

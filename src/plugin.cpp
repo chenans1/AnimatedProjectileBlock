@@ -58,6 +58,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
             case SKSE::MessagingInterface::kDataLoaded:
                 hooks::LoadForms();
                 hooks::InstallSetEffectiveness();
+                hooks::requestSTBL();
                 break;
             // case SKSE::MessagingInterface::kPostLoadGame:
             // case SKSE::MessagingInterface::kNewGame:
