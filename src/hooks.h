@@ -5,6 +5,7 @@
 #include <cctype>
 #include "settings.h"
 #include "extern/PerkEntryPointExtenderAPI.h"
+#include "extern/STBL_API.h"
 
 class hooks {
     //logic adapted from valhalla combat, hooks adapted from arrowInterpreter. 
@@ -490,7 +491,7 @@ class hooks {
             return true;
         }
 
-        static void processProjectileCollision(RE::Projectile* a_projectile, RE::TESObjectREFR* a_ref) { 
+        static void processArrowCollision(RE::Projectile* a_projectile, RE::TESObjectREFR* a_ref) { 
             // SKSE::log::info("[processProjCollision]");
             if (!a_projectile || !a_ref) {
                 return;
@@ -522,7 +523,7 @@ class hooks {
                 float staminaCost = 0.0f;
                 if (!tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
                     if (cfg.log) {
-                        SKSE::log::info("[processProjectileCollision] arrow block failed: target={} stamina={} required={}",
+                        SKSE::log::info("[processArrowCollision] arrow block failed: target={} stamina={} required={}",
                             static_cast<void*>(actor), actor->GetActorValue(RE::ActorValue::kStamina), staminaCost);
                     }
                     return;
@@ -539,7 +540,7 @@ class hooks {
                     sendBlockModEvent(actor, attacker, false);
                 }
                 if (cfg.log) {
-                    SKSE::log::info("[processProjectileCollision] projectile={} target={} reduction={} staminaCost={} remainingWeaponDamage={}",
+                    SKSE::log::info("[processArrowCollision] projectile={} target={} reduction={} staminaCost={} remainingWeaponDamage={}",
                         static_cast<void*>(a_projectile), static_cast<void*>(a_ref), reduction, staminaCost, rd.weaponDamage);
                 }
             }
@@ -548,7 +549,7 @@ class hooks {
         //need to hook specific vtable funcs, hooking the base vfunc doesnt work.
         static RE::Projectile::ImpactData* AddImpactProj(RE::ArrowProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
             // SKSE::log::info("[AddImpactProj]");
-            processProjectileCollision(a_projectile, a_ref);
+            processArrowCollision(a_projectile, a_ref);
             return _originalArrow(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
         }
 
