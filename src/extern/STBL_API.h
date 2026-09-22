@@ -58,7 +58,7 @@ namespace STBL_API {
             [[nodiscard]] virtual TimedBlockResult CanTimedBlock(const TimedBlockRequest& request) noexcept = 0;
 
             // Revalidates the timed-block context and applies gameplay effects.
-            [[nodiscard]] virtual bool TriggerTimedBlock(const TimedBlockRequest& request) noexcept = 0;
+            virtual bool TriggerTimedBlock(const TimedBlockRequest& request) noexcept = 0;
 
             // Convenience operation that evaluates and immediately applies effects.
             [[nodiscard]] virtual TimedBlockResult TryTriggerTimedBlock(const TimedBlockRequest& request) noexcept = 0;

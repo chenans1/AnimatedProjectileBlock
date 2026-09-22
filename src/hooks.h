@@ -204,10 +204,9 @@ class hooks {
                 auto& rd = a_projectile->GetProjectileRuntimeData();
                 auto* attackerRef = rd.shooter.get().get();
                 auto* attacker = attackerRef ? attackerRef->As<RE::Actor>() : nullptr;
-
+                const auto mode = getBlockMode(actor, profile, arrowDamageReductionEnabled(actor, profile, cfg));
                 const float incomingDamage = rd.weaponDamage;
                 float staminaCost = 0.0f;
-                const float reduction = blockedFraction(actor, profile, false);
                 //stbl integration, for overcap timed block. For undercap timed block damage reduction api is not needed - i will consider hit data modification some day for native compat?
                 if (stbl && actor->IsPlayerRef()) {
                     const STBL_API::TimedBlockRequest request{STBL_API::AttackType::Arrow, attacker, actor};
@@ -219,6 +218,7 @@ class hooks {
                             }
                             actor->NotifyAnimationGraph("BlockHitStart");
                             //we accept 0 reduction here. in this case purely timed block DR from STBL applies
+                            const float reduction = mode == BlockMode::kDamageReduction ? blockedFraction(actor, profile, false) : 0.0f;
                             rd.weaponDamage = incomingDamage * (1.0f - reduction) * (isTimedBlocking.damageMultiplier);
                             awardBlockExperience(actor, incomingDamage);
                             stbl->TriggerTimedBlock(request);
@@ -231,8 +231,7 @@ class hooks {
                         }
                     }
                 }
-                
-                const auto mode = getBlockMode(actor, profile, arrowDamageReductionEnabled(actor, profile, cfg));
+
                 if (mode == BlockMode::kDisabled) {
                     return;
                 }
@@ -240,7 +239,7 @@ class hooks {
                     actor->NotifyAnimationGraph("BlockHitStart");
                     return;
                 }
-
+                const float reduction = blockedFraction(actor, profile, false);
                 if (reduction <= 0.0f) {
                     return;
                 }
@@ -297,7 +296,6 @@ class hooks {
                         const bool flame = projectile->formType == RE::FormType::ProjectileFlame;
                         const auto mode = getBlockMode(actor, profile, spellDamageReductionEnabled(actor, profile, cfg));
                         auto* attacker = caster ? caster->GetCasterAsActor() : nullptr;
-                        const float reduction = blockedFraction(actor, profile, true);
                         auto costs = spellCosts(actor, profile, cfg);
                         if (flame) {
                             const float scale = std::clamp(costs.flameMultiplier, 0.0f, 5.0f);
@@ -313,8 +311,8 @@ class hooks {
                                     if (cfg.log) {
                                         SKSE::log::info("[ApplyProjectileSpell] spell timed block success");
                                     }
-                                    
                                     //always damage reduction, but not always return the simple timed block event to avoid spam - only if blockhit
+                                    const float reduction = mode == BlockMode::kDamageReduction ? blockedFraction(actor, profile, false) : 0.0f;
                                     hit = Hit{target->GetHandle(), spell, (1.0f - reduction) * (isTimedBlocking.damageMultiplier)};
                                     if (playSpellBlockAnimation(actor, flame)){
                                         //block experience should work - it's always being called anyways, and with stbl it overwrites the damage reduction.
@@ -335,6 +333,7 @@ class hooks {
                         if (mode == BlockMode::kAnimationOnly) {
                             playSpellBlockAnimation(actor, flame);
                         } else if (mode == BlockMode::kDamageReduction) {
+                            const float reduction = blockedFraction(actor, profile, true);
                             if (reduction > 0.0f) {
                                 const bool paid = tryConsumeSpellBlockResources(actor, costs.stamina, costs.magicka);
                                 if (cfg.log && (!flame || !paid)) {
