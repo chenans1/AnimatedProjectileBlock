@@ -2,8 +2,10 @@
 
 #include <cstdint>
 /*
-TryTriggerTimedBlock is called when a timed block occurs - external plugin consumer must still handle damage reduction.
-The try trigger checks if the timed block window is active and if it is, apply stagger/spell/timed block mod events.
+CanTimedBlock evaluates the window and damage policy without applying effects.
+TriggerTimedBlock commits effects after a caller completes its own checks.
+TryTriggerTimedBlock is the convenience operation that evaluates and commits.
+External consumers remain responsible for applying the returned damage multiplier.
 */
 namespace RE {
     class Actor;
@@ -52,6 +54,13 @@ namespace STBL_API {
 
     class STBL {
         public:
+            // Pure query: never applies gameplay effects.
+            [[nodiscard]] virtual TimedBlockResult CanTimedBlock(const TimedBlockRequest& request) noexcept = 0;
+
+            // Revalidates the timed-block context and applies gameplay effects.
+            [[nodiscard]] virtual bool TriggerTimedBlock(const TimedBlockRequest& request) noexcept = 0;
+
+            // Convenience operation that evaluates and immediately applies effects.
             [[nodiscard]] virtual TimedBlockResult TryTriggerTimedBlock(const TimedBlockRequest& request) noexcept = 0;
         protected:
             virtual ~STBL() = default;
