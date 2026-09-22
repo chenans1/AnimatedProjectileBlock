@@ -27,6 +27,7 @@ set(SOURCES
     src/PCH.h
     src/plugin.cpp
     src/hooks.h
+    src/hooks.cpp
     src/settings.h
     src/settings.cpp
 )
