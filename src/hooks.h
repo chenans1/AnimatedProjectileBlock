@@ -186,6 +186,9 @@ class hooks {
         
         static bool tryConsumeArrowBlockStamina(RE::Actor* blocker, float incomingDamage, const settings::config& cfg, float& cost);
 
+        static bool reflectArrow(RE::Actor* blocker, RE::Actor* target, RE::TESAmmo* ammo, RE::TESObjectWEAP* weapon);
+        static bool reflectSpell(RE::Actor* blocker, RE::Actor* target, RE::SpellItem* a_spell);
+
         static void processArrowCollision(RE::Projectile* a_projectile, RE::TESObjectREFR* a_ref) { 
             // SKSE::log::info("[processProjCollision]");
             if (!a_projectile || !a_ref) {
@@ -211,7 +214,9 @@ class hooks {
                 if (stbl && actor->IsPlayerRef()) {
                     const STBL_API::TimedBlockRequest request{STBL_API::AttackType::Arrow, attacker, actor};
                     const auto isTimedBlocking = stbl->CanTimedBlock(request);
-                    if (isTimedBlocking.outcome != STBL_API::TimedBlockOutcome::NotTriggered) {
+                    const float reflectionMult = isTimedBlocking.reflectionCostMultiplier;
+                    // if (isTimedBlocking.outcome != STBL_API::TimedBlockOutcome::NotTriggered) {
+                    if (isTimedBlocking.Triggered()) {
                         if (tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
                             if (cfg.log) {
                                 SKSE::log::info("[processArrowCollision] arrow timed block success");
@@ -226,6 +231,16 @@ class hooks {
                                 castContextSpell(actor, attacker, ArrowBlockerSpell);
                                 castContextSpell(attacker, actor, ArrowAttackerSpell);
                                 sendBlockModEvent(actor, attacker, false);
+                                //handle projectile reflection here
+                                if (isTimedBlocking.ShouldReflect()) {
+                                    float reflectionCost = staminaCost * reflectionMult;
+                                    if (tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, reflectionCost)) {
+                                        if (cfg.log) {
+                                            SKSE::log::info("[processArrowCollision] attempting arrow reflection");
+                                        }
+                                        reflectArrow(actor, attacker, rd.ammoSource, rd.weaponSource);
+                                    }
+                                }
                             }
                             return;
                         }
@@ -306,7 +321,8 @@ class hooks {
                         if (stbl && actor->IsPlayerRef()) {
                             const STBL_API::TimedBlockRequest request{STBL_API::AttackType::Spell, attacker, actor};
                             const auto isTimedBlocking = stbl->CanTimedBlock(request);
-                            if (isTimedBlocking.outcome != STBL_API::TimedBlockOutcome::NotTriggered) {
+                            // if (isTimedBlocking.outcome != STBL_API::TimedBlockOutcome::NotTriggered) {
+                            if (isTimedBlocking.Triggered()) {
                                 if (tryConsumeSpellBlockResources(actor, costs.stamina, costs.magicka) && actor->IsPlayerRef()) {
                                     if (cfg.log) {
                                         SKSE::log::info("[ApplyProjectileSpell] spell timed block success");
@@ -321,6 +337,18 @@ class hooks {
                                             castContextSpell(actor, attacker, SpellBlockerSpell);
                                             castContextSpell(attacker, actor, SpellAttackerSpell);
                                             sendBlockModEvent(actor, attacker, true);
+                                            // if (isTimedBlocking.reflectProjectile) {
+                                            //handle projectile reflection here
+                                            if (isTimedBlocking.ShouldReflect()) {
+                                                if (auto* reflectedSpell = spell->As<RE::SpellItem>()) {
+                                                    if (tryConsumeSpellBlockResources(actor, costs.stamina * isTimedBlocking.reflectionCostMultiplier, costs.magicka * isTimedBlocking.reflectionCostMultiplier)) {
+                                                        if (cfg.log) {
+                                                            SKSE::log::info("[ApplyProjectileSpell] attempting spell reflection");
+                                                        }
+                                                        reflectSpell(actor, attacker, reflectedSpell);
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                     HitScope scope(std::move(hit));
