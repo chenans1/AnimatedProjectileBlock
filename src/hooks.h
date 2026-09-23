@@ -3,6 +3,9 @@
 #include <atomic>
 #include <charconv>
 #include <cctype>
+#include <chrono>
+#include <mutex>
+#include <unordered_map>
 #include "settings.h"
 #include "extern/PerkEntryPointExtenderAPI.h"
 #include "extern/STBL_API.h"
@@ -15,6 +18,12 @@ class hooks {
             {
                 REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_ArrowProjectile[0]};
                 _originalArrow = vtable.write_vfunc(0xBD, AddImpactProj);
+            }
+
+            {
+                REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_ShaderReferenceEffect[0] };
+                originalUpdateShader = vtable.write_vfunc(0x28, UpdateShader);
+                SKSE::log::info("[hooks] ShaderReferenceEffect update installed");
             }
 
             SKSE::log::info("[hooks] attempting hooking projectile ApplyProjectileSpell");
@@ -128,6 +137,93 @@ class hooks {
         };
 
         static inline thread_local std::optional<Hit> currentHit;
+
+        struct BlockedShader {
+            RE::TESEffectShader* shader;
+            RE::ObjectRefHandle target;
+            std::chrono::steady_clock::time_point expiresAt;
+        };
+
+        static inline std::mutex blockedShadersLock;
+        static inline std::unordered_map<RE::ReferenceEffectController*, BlockedShader> blockedShaders;
+
+        static void fadeBlockedShader(RE::ShaderReferenceEffect* shaderEffect) {
+            if (!shaderEffect || !shaderEffect->effectData || shaderEffect->finished) {
+                return;
+            }
+
+            if (settings::Get().log) {
+                SKSE::log::info("[hit shader] detaching instance={} shaderFormID={:08X} target={:08X} age={} lifetime={} finished={} attached={}",
+                    static_cast<void*>(shaderEffect), shaderEffect->effectData->GetFormID(),
+                    shaderEffect->target.native_handle(), shaderEffect->age,
+                    shaderEffect->lifetime, shaderEffect->finished, shaderEffect->GetAttached());
+            }
+
+            // A shader can already be attached when effectiveness is calculated.
+            // Detach removes this instance's rendered geometry immediately;
+            // neither the ActiveEffect nor its shared EFSH/MGEF forms are changed.
+            shaderEffect->Detach();
+            shaderEffect->finished = true;
+            shaderEffect->lifetime = shaderEffect->age;
+        }
+
+        static bool UpdateShader(RE::ShaderReferenceEffect* shaderEffect, float delta) {
+            const bool keepUpdating = originalUpdateShader(shaderEffect, delta);
+            if (shaderEffect && shaderEffect->controller) {
+                const auto now = std::chrono::steady_clock::now();
+                bool blocked = false;
+                {
+                    std::scoped_lock lock(blockedShadersLock);
+                    const auto it = blockedShaders.find(shaderEffect->controller);
+                    if (it != blockedShaders.end()) {
+                        blocked = now < it->second.expiresAt && shaderEffect->effectData == it->second.shader &&
+                            shaderEffect->target == it->second.target;
+                        if (now >= it->second.expiresAt) {
+                            blockedShaders.erase(it);
+                        }
+                    }
+                }
+                if (blocked) {
+                    fadeBlockedShader(shaderEffect);
+                }
+            }
+            return keepUpdating;
+        }
+
+        static inline REL::Relocation<decltype(UpdateShader)> originalUpdateShader;
+
+        static void suppressHitShader(RE::ActiveEffect* effect, RE::TESObjectREFR* target) {
+            if (!effect || !target) {
+                return;
+            }
+
+            auto* baseEffect = effect->GetBaseObject();
+            auto* shader = baseEffect ? baseEffect->data.effectShader : nullptr;
+            if (settings::Get().log) {
+                SKSE::log::info("[hit shader probe] activeEffect={} MGEFFormID={:08X} shaderFormID={:08X} activeFlags={:08X} effectAge={} effectDuration={} hitEffects={}",
+                    static_cast<void*>(effect), baseEffect ? baseEffect->GetFormID() : 0,
+                    shader ? shader->GetFormID() : 0, effect->flags.underlying(),
+                    effect->elapsedSeconds, effect->duration,
+                    static_cast<void*>(effect->hitEffects));
+            }
+            if (!baseEffect || !shader || baseEffect->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kNoHitEffect)) {
+                return;
+            }
+
+            {
+                std::scoped_lock lock(blockedShadersLock);
+                const auto now = std::chrono::steady_clock::now();
+                std::erase_if(blockedShaders, [now](const auto& entry) {
+                    return entry.second.expiresAt <= now;
+                });
+                blockedShaders.insert_or_assign(&effect->hitEffectController,
+                    BlockedShader{ shader, target->GetHandle(), now + std::chrono::milliseconds(250) });
+            }
+            if (settings::Get().log) {
+                SKSE::log::info("[hit shader] watching controller={} target={:08X} shaderFormID={:08X}",
+                    static_cast<void*>(&effect->hitEffectController), target->GetHandle().native_handle(), shader->GetFormID());
+            }
+        }
 
         struct BlockProfile {
             bool enabled;
@@ -402,18 +498,6 @@ class hooks {
                 }
                 return;
             }
-            //only affect damage to H/M/S
-            const auto* baseEffect = effect->GetBaseObject();
-            constexpr auto isVitalActorValue = [](RE::ActorValue value) {
-                return value == RE::ActorValue::kHealth || value == RE::ActorValue::kStamina || value == RE::ActorValue::kMagicka;
-            };
-            const bool damageHMS = effect->IsCausingHealthDamage() || (baseEffect && baseEffect->IsDetrimental() && (isVitalActorValue(baseEffect->data.primaryAV) || isVitalActorValue(baseEffect->data.secondaryAV)));
-            if (!damageHMS) {
-                if (settings::Get().log) {
-                    SKSE::log::info("[SetEffectiveness] effect does not damage Health, Stamina or Magicka");
-                }
-                return;
-            }
             // MagicTarget is a secondary base of Actor. Ask it for the owning reference instead of reinterpreting its address as an Actor*.
             auto* victimRef = effect->target ? effect->target->GetTargetStatsObject() : nullptr;
             if (!victimRef || !victimRef->As<RE::Actor>()) {
@@ -429,6 +513,23 @@ class hooks {
                 }
                 return;
             }
+
+            suppressHitShader(effect, victimRef);
+
+            // Only damage to Health, Magicka, or Stamina is reduced. Shader
+            // suppression above applies to every effect from the blocked spell.
+            const auto* baseEffect = effect->GetBaseObject();
+            constexpr auto isVitalActorValue = [](RE::ActorValue value) {
+                return value == RE::ActorValue::kHealth || value == RE::ActorValue::kStamina || value == RE::ActorValue::kMagicka;
+            };
+            const bool damageHMS = effect->IsCausingHealthDamage() || (baseEffect && baseEffect->IsDetrimental() && (isVitalActorValue(baseEffect->data.primaryAV) || isVitalActorValue(baseEffect->data.secondaryAV)));
+            if (!damageHMS) {
+                if (settings::Get().log) {
+                    SKSE::log::info("[SetEffectiveness] effect does not damage Health, Stamina or Magicka");
+                }
+                return;
+            }
+
             const float oldMagnitude = effect->magnitude;
             effect->magnitude *= currentHit->remainingDamage;
             if (auto* victim = victimRef->As<RE::Actor>()) {
