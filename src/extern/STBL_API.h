@@ -43,6 +43,12 @@ namespace STBL_API {
         // Multiplier applied to incoming damage:
         // 1.0 = unchanged, 0.5 = half damage, 0.0 = no damage.
         float damageMultiplier = 1.0f;
+
+        // Additional cost relative to the base block cost. For example, 1.0
+        // means reflection costs one additional base cost (2.0x total).
+        // This is zero when the projectile should not be reflected.
+        float reflectionCostMultiplier = 0.0f;
+        bool reflectProjectile = false;
         [[nodiscard]] bool Triggered() const noexcept {
             return outcome != TimedBlockOutcome::NotTriggered;
         }
@@ -50,6 +56,11 @@ namespace STBL_API {
         [[nodiscard]] bool FullyBlocked() const noexcept {
             return outcome == TimedBlockOutcome::FullyBlocked;
         }
+
+        [[nodiscard]] bool ShouldReflect() const noexcept {
+            return Triggered() && reflectProjectile;
+        }
+
     };
 
     class STBL {
