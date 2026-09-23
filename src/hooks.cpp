@@ -366,38 +366,22 @@ bool hooks::tryConsumeArrowBlockStamina(RE::Actor* blocker, float incomingDamage
 
 //shoots the arrow using the attacker but from the blocker's position. after arrow spawned modify the data so the blocker is shooter/cause
 //and the target is target.
+//nevermind lol just have the player as shooter
 bool hooks::reflectArrow(RE::Actor* blocker, RE::Actor* target, RE::TESAmmo* ammo, RE::TESObjectWEAP* weapon) {
     if (!blocker || !target || !ammo || !weapon) { 
         SKSE::log::info("[reflectArrow] failed: no ammo/weapon");
         return false;
     }
-    // RE::NiPoint3 origin;
-    // RE::Projectile::ProjectileRot rotation{};
-    // origin = blocker->GetPosition();
-    // origin.z += 96.0f;
-
-    // rotation.x = blocker->GetAimAngle();
-    // rotation.z = blocker->GetAimHeading();
-
-    RE::NiPoint3 origin = blocker->GetPosition();
-    // origin.z += 96.0f;
-    origin.z += (blocker->GetBoundMax().z - blocker->GetBoundMin().z) * 0.7f;
-    RE::NiPoint3 targetPosition = target->GetPosition();
-    // targetPosition.z += 96.0f;
-    targetPosition.z += (target->GetBoundMax().z - target->GetBoundMin().z) * 0.7f;
-    const RE::NiPoint3 direction = targetPosition - origin;
-    const float horizontalDistance = std::hypot(direction.x, direction.y);
+    RE::NiPoint3 origin;
     RE::Projectile::ProjectileRot rotation{};
-    rotation.z = std::atan2(direction.x, direction.y);
-    rotation.x = -std::atan2(direction.z, horizontalDistance);
+    origin = blocker->GetPosition();
+    origin.z += 96.0f;
 
-    // Move the origin slightly forward to avoid immediately colliding with the blocker.
-    RE::NiPoint3 normalizedDirection = direction;
-    normalizedDirection.Unitize();
-    origin += normalizedDirection * 128.0f;
+    rotation.x = blocker->GetAimAngle();
+    rotation.z = blocker->GetAimHeading();
 
     RE::ProjectileHandle handle;
-    RE::Projectile::LaunchData launchData(target, origin, rotation, ammo, weapon);
+    RE::Projectile::LaunchData launchData(blocker, origin, rotation, ammo, weapon);
     RE::Projectile::Launch(&handle, launchData);
     auto projectile = handle.get();
     if (!projectile) {
@@ -409,65 +393,66 @@ bool hooks::reflectArrow(RE::Actor* blocker, RE::Actor* target, RE::TESAmmo* amm
     
     projectileData.weaponDamage /= projectileData.power;
     projectileData.power = 1.0f;
-    projectileData.shooter = blocker;
-    if (auto* cause = blocker->GetActorCause()) {
-        projectile->SetActorCause(cause);
-    }
+    // projectileData.shooter = blocker;
+    // if (auto* cause = blocker->GetActorCause()) {
+    //     projectile->SetActorCause(cause);
+    // }
     
     projectileData.desiredTarget = target;
-    SKSE::log::info("[reflectArrow] sucessfully reflected arrow");
+    // SKSE::log::info("[reflectArrow] sucessfully reflected arrow");
     return true;
 }
 
 //fires the spell using the caster as the caster but the blocker as the origin
 bool hooks::reflectSpell(RE::Actor* blocker, RE::Actor* target, RE::SpellItem* spell) {
     if (!blocker || !target || !spell) return false;
-    auto* primaryEffect = spell->GetAVEffect();
-    if (!primaryEffect || !primaryEffect->data.projectileBase) {
-        SKSE::log::warn("[reflectSpell] Spell {:08X} has no projectile", spell->GetFormID());
-        return false;
-    }
-
-    auto* projectileBase = primaryEffect->data.projectileBase;
-    // if (projectileBase->data.type != RE::BGSProjectileData::Type::kMissile) {
-    //     SKSE::log::warn("[reflectSpell] Unsupported projectile type for spell {:08X}", spell->GetFormID());
+    castContextSpell(blocker, target, spell);
+    // auto* primaryEffect = spell->GetAVEffect();
+    // if (!primaryEffect || !primaryEffect->data.projectileBase) {
+    //     SKSE::log::warn("[reflectSpell] Spell {:08X} has no projectile", spell->GetFormID());
     //     return false;
     // }
 
-    RE::NiPoint3 origin = blocker->GetPosition();
-    // origin.z += 96.0f;
-    origin.z += (blocker->GetBoundMax().z - blocker->GetBoundMin().z) * 0.7f;
-    RE::NiPoint3 targetPosition = target->GetPosition();
-    // targetPosition.z += 96.0f;
-    targetPosition.z += (target->GetBoundMax().z - target->GetBoundMin().z) * 0.7f;
-    const RE::NiPoint3 direction = targetPosition - origin;
-    const float horizontalDistance = std::hypot(direction.x, direction.y);
-    RE::Projectile::ProjectileRot rotation{};
-    rotation.z = std::atan2(direction.x, direction.y);
-    rotation.x = -std::atan2(direction.z, horizontalDistance);
+    // auto* projectileBase = primaryEffect->data.projectileBase;
+    // // if (projectileBase->data.type != RE::BGSProjectileData::Type::kMissile) {
+    // //     SKSE::log::warn("[reflectSpell] Unsupported projectile type for spell {:08X}", spell->GetFormID());
+    // //     return false;
+    // // }
 
-    // Move the origin slightly forward to avoid immediately colliding with the blocker.
-    RE::NiPoint3 normalizedDirection = direction;
-    normalizedDirection.Unitize();
-    origin += normalizedDirection * 128.0f;
+    // RE::NiPoint3 origin = blocker->GetPosition();
+    // // origin.z += 96.0f;
+    // origin.z += (blocker->GetBoundMax().z - blocker->GetBoundMin().z) * 0.7f;
+    // RE::NiPoint3 targetPosition = target->GetPosition();
+    // // targetPosition.z += 96.0f;
+    // targetPosition.z += (target->GetBoundMax().z - target->GetBoundMin().z) * 0.7f;
+    // const RE::NiPoint3 direction = targetPosition - origin;
+    // const float horizontalDistance = std::hypot(direction.x, direction.y);
+    // RE::Projectile::ProjectileRot rotation{};
+    // rotation.z = std::atan2(direction.x, direction.y);
+    // rotation.x = -std::atan2(direction.z, horizontalDistance);
 
-    RE::Projectile::LaunchData launchData(target, origin, rotation, spell);
-    RE::ProjectileHandle handle;
-    RE::Projectile::Launch(&handle, launchData);
-    auto projectile = handle.get();
-    if (!projectile) {
-        SKSE::log::error("[reflectSpell] Failed to launch spell {:08X}", spell->GetFormID());
-        return false;
-    }
+    // // Move the origin slightly forward to avoid immediately colliding with the blocker.
+    // RE::NiPoint3 normalizedDirection = direction;
+    // normalizedDirection.Unitize();
+    // origin += normalizedDirection * 128.0f;
 
-    auto& projectileData = projectile->GetProjectileRuntimeData();
-    projectileData.spell = spell;
-    projectileData.shooter = target->GetHandle();
-    if (auto* cause = target->GetActorCause()) {
-        projectile->SetActorCause(cause);
-    }
-    projectileData.desiredTarget = target;
+    // RE::Projectile::LaunchData launchData(target, origin, rotation, spell);
+    // RE::ProjectileHandle handle;
+    // RE::Projectile::Launch(&handle, launchData);
+    // auto projectile = handle.get();
+    // if (!projectile) {
+    //     SKSE::log::error("[reflectSpell] Failed to launch spell {:08X}", spell->GetFormID());
+    //     return false;
+    // }
+
+    // auto& projectileData = projectile->GetProjectileRuntimeData();
+    // projectileData.spell = spell;
+    // projectileData.shooter = target->GetHandle();
+    // if (auto* cause = target->GetActorCause()) {
+    //     projectile->SetActorCause(cause);
+    // }
+    // projectileData.desiredTarget = target;
     
-    SKSE::log::info("[reflectSpell] sucessfully reflected spell");
+    // SKSE::log::info("[reflectSpell] sucessfully reflected spell");
     return true;
 }
