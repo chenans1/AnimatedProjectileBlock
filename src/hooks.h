@@ -249,6 +249,14 @@ class hooks {
                     awardBlockExperience(actor, incomingDamage);
                     stbl->TriggerTimedBlock(request);
                     
+                    if (timedBlock.convertRemainingDamage) {
+                        auto* actorAV = actor->AsActorValueOwner();
+                        float stamina = actorAV->GetActorValue(RE::ActorValue::kStamina);
+                        if (stamina >= (hitData.totalDamage * timedBlock.remainingDamageConversionPortion)) {
+                            actorAV->DamageActorValue(RE::ActorValue::kStamina, (hitData.totalDamage * timedBlock.remainingDamageConversionPortion));
+                        }
+                    }
+
                     if (cfg.log) {
                         SKSE::log::info("[processArrowCollision] timed block: target={:08X} reduction={} timedMultiplier={} staminaCost={} physicalDamage={}->{} totalDamage={}->{} percentBlocked={} stagger={}",
                             actor->GetFormID(), reduction, timedBlock.damageMultiplier, staminaCost, incomingDamage, hitData.physicalDamage,
@@ -424,7 +432,7 @@ class hooks {
             HitScope scope(std::move(hit));
             originalApply(caster, impactPos, projectile, target, arg5, arg6, arg7, arg8);
         }
-
+        
         static void SetEffectiveness(RE::ActiveEffect* effect, float power, bool onlyHostile) {
             originalSetEffectiveness(effect, power, onlyHostile);
             if (!currentHit || !effect) {
