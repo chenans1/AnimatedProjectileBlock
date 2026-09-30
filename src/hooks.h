@@ -52,10 +52,11 @@ class hooks {
             cooldownEffect = dataHandler->LookupForm<RE::EffectSetting>(0x800, "AnimatedProjectileBlocking.esp");
 
             if (!cooldownSpell || !cooldownEffect) {
-                SKSE::log::error("Failed to load enchant cooldown forms: spell={}, effect={}", static_cast<void*>(cooldownSpell), static_cast<void*>(cooldownEffect));
+                SKSE::log::error("Failed to load enchant cooldown forms: spell={:08X}, effect={:08X}",
+                    cooldownSpell ? cooldownSpell->GetFormID() : 0, cooldownEffect ? cooldownEffect->GetFormID() : 0);
                 return false;
             }
-            SKSE::log::info("Sucessfully loaded enchant cd forms: spell={}, effect={}", static_cast<void*>(cooldownSpell), static_cast<void*>(cooldownEffect));
+            SKSE::log::info("Sucessfully loaded enchant cd forms: spell={:08X}, effect={:08X}", cooldownSpell->GetFormID(), cooldownEffect->GetFormID());
             
             ArrowBlockerSpell = dataHandler->LookupForm<RE::SpellItem>(0x803, "AnimatedProjectileBlocking.esp");
             ArrowAttackerSpell = dataHandler->LookupForm<RE::SpellItem>(0x805, "AnimatedProjectileBlocking.esp");
@@ -63,13 +64,16 @@ class hooks {
             SpellAttackerSpell = dataHandler->LookupForm<RE::SpellItem>(0x809, "AnimatedProjectileBlocking.esp");
 
             if (!ArrowBlockerSpell || !ArrowAttackerSpell || !SpellBlockerSpell || !SpellAttackerSpell) {
-                SKSE::log::error("Failed to load attacker/blocker spell forms: ArrowBlockerSpell={}, ArrowAttackerSpell={}, SpellBlockerSpell={}, SpellAttackerSpell={}", 
-                    static_cast<void*>(ArrowBlockerSpell), static_cast<void*>(ArrowAttackerSpell), static_cast<void*>(SpellBlockerSpell), static_cast<void*>(SpellAttackerSpell));
+                SKSE::log::error("Failed to load attacker/blocker spell forms: ArrowBlockerSpell={:08X}, ArrowAttackerSpell={:08X}, SpellBlockerSpell={:08X}, SpellAttackerSpell={:08X}",
+                    ArrowBlockerSpell ? ArrowBlockerSpell->GetFormID() : 0,
+                    ArrowAttackerSpell ? ArrowAttackerSpell->GetFormID() : 0,
+                    SpellBlockerSpell ? SpellBlockerSpell->GetFormID() : 0,
+                    SpellAttackerSpell ? SpellAttackerSpell->GetFormID() : 0);
                 return false;
             }
 
-            SKSE::log::info("Successfully loaded arrow/spell attacker/blocker spell forms: ArrowBlockerSpell={}, ArrowAttackerSpell={}, SpellBlockerSpell={}, SpellAttackerSpell={}", 
-                    static_cast<void*>(ArrowBlockerSpell), static_cast<void*>(ArrowAttackerSpell), static_cast<void*>(SpellBlockerSpell), static_cast<void*>(SpellAttackerSpell));
+            SKSE::log::info("Successfully loaded arrow/spell attacker/blocker spell forms: ArrowBlockerSpell={:08X}, ArrowAttackerSpell={:08X}, SpellBlockerSpell={:08X}, SpellAttackerSpell={:08X}",
+                ArrowBlockerSpell->GetFormID(), ArrowAttackerSpell->GetFormID(), SpellBlockerSpell->GetFormID(), SpellAttackerSpell->GetFormID());
 
             const auto cfg = settings::Get();
             playerWeaponArrowPerk = loadPerkRequirement(cfg.playerWeaponArrowPerkRequirement, "weapon arrow");
@@ -246,8 +250,8 @@ class hooks {
                     stbl->TriggerTimedBlock(request);
                     
                     if (cfg.log) {
-                        SKSE::log::info("[processArrowCollision] timed block: target={} reduction={} timedMultiplier={} staminaCost={} physicalDamage={}->{} totalDamage={}->{} percentBlocked={} stagger={}",
-                            static_cast<void*>(actor), reduction, timedBlock.damageMultiplier, staminaCost, incomingDamage, hitData.physicalDamage,
+                        SKSE::log::info("[processArrowCollision] timed block: target={:08X} reduction={} timedMultiplier={} staminaCost={} physicalDamage={}->{} totalDamage={}->{} percentBlocked={} stagger={}",
+                            actor->GetFormID(), reduction, timedBlock.damageMultiplier, staminaCost, incomingDamage, hitData.physicalDamage,
                             incomingTotalDamage, hitData.totalDamage, hitData.percentBlocked, hitData.stagger);
                     }
                     if (attacker) {
@@ -292,8 +296,8 @@ class hooks {
             
             if (!tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
                 if (cfg.log) {
-                    SKSE::log::info("[processArrowCollision] arrow block failed: target={} stamina={} required={}",
-                        static_cast<void*>(actor), actor->GetActorValue(RE::ActorValue::kStamina), staminaCost);
+                    SKSE::log::info("[processArrowCollision] arrow block failed: target={:08X} stamina={} required={}",
+                        actor->GetFormID(), actor->GetActorValue(RE::ActorValue::kStamina), staminaCost);
                 }
                 return;
             }
@@ -312,8 +316,8 @@ class hooks {
             }
 
             if (cfg.log) {
-                SKSE::log::info("[processArrowCollision] arrow block: target={} reduction={} staminaCost={} physicalDamage={}->{} totalDamage={}->{} percentBlocked={}",
-                    static_cast<void*>(actor), reduction, staminaCost, incomingDamage, hitData.physicalDamage, incomingTotalDamage, hitData.totalDamage,
+                SKSE::log::info("[processArrowCollision] arrow block: target={:08X} reduction={} staminaCost={} physicalDamage={}->{} totalDamage={}->{} percentBlocked={}",
+                    actor->GetFormID(), reduction, staminaCost, incomingDamage, hitData.physicalDamage, incomingTotalDamage, hitData.totalDamage,
                     hitData.percentBlocked);
             }
         }
@@ -399,8 +403,8 @@ class hooks {
                             if (reduction > 0.0f) {
                                 const bool paid = tryConsumeSpellBlockResources(actor, costs.stamina, costs.magicka);
                                 if (cfg.log && (!flame || !paid)) {
-                                    SKSE::log::info("[ApplyProjectileSpell] spell block {}: target={} staminaCost={} magickaCost={}",
-                                        paid ? "paid" : "failed", static_cast<void*>(actor), costs.stamina, costs.magicka);
+                                    SKSE::log::info("[ApplyProjectileSpell] spell block {}: target={:08X} staminaCost={} magickaCost={}",
+                                        paid ? "paid" : "failed", actor->GetFormID(), costs.stamina, costs.magicka);
                                 }
                                 if (paid) {
                                     hit = Hit{target->GetHandle(), spell, 1.0f - reduction};
@@ -429,7 +433,9 @@ class hooks {
             // Must belong to the spell from the blocked projectile.
             if (effect->spell != currentHit->spell) {
                 if (settings::Get().log) {
-                    SKSE::log::info("[SetEffectiveness] effect spell: {} is not currenthit spell: {}", static_cast<void*>(effect->spell), static_cast<void*>(currentHit->spell));
+                    SKSE::log::info("[SetEffectiveness] effect spell {:08X} is not current hit spell {:08X}",
+                        effect->spell ? effect->spell->GetFormID() : 0,
+                        currentHit->spell ? currentHit->spell->GetFormID() : 0);
                 }
                 return;
             }
@@ -444,7 +450,9 @@ class hooks {
             const auto victimHandle = victimRef->GetHandle();
             if (victimHandle != currentHit->target) {
                 if (settings::Get().log) {
-                    SKSE::log::info("[SetEffectiveness] target mismatch: effect target {:08X} (handle {:08X}), impact handle {:08X}", victimRef->GetFormID(), victimHandle.native_handle(), currentHit->target.native_handle());
+                    auto* impactTarget = currentHit->target ? currentHit->target.get().get() : nullptr;
+                    SKSE::log::info("[SetEffectiveness] target mismatch: effect target={:08X}, impact target={:08X}",
+                        victimRef->GetFormID(), impactTarget ? impactTarget->GetFormID() : 0);
                 }
                 return;
             }
@@ -472,7 +480,8 @@ class hooks {
             }
 
             if (settings::Get().log) {
-                SKSE::log::info("[SetEffectiveness] blocked spell effect={} magnitude {} -> {}", static_cast<void*>(effect), oldMagnitude, effect->magnitude);
+                SKSE::log::info("[SetEffectiveness] blocked spell effect={:08X} magnitude {} -> {}",
+                    effect->spell ? effect->spell->GetFormID() : 0, oldMagnitude, effect->magnitude);
             }
 
         }
