@@ -228,11 +228,13 @@ class hooks {
             const float incomingTotalDamage = hitData.totalDamage;
             float staminaCost = 0.0f;
 
+            const bool alreadyBlocked = hitData.flags.any(RE::HitData::Flag::kBlocked);
+
             if (stbl && actor->IsPlayerRef()) {
                 const STBL_API::TimedBlockRequest request{STBL_API::AttackType::Arrow, attacker, actor};
                 const auto timedBlock = stbl->CanTimedBlock(request);
                 if (timedBlock.Triggered() && tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
-                    actor->NotifyAnimationGraph("BlockHitStart");
+                    if (!alreadyBlocked) actor->NotifyAnimationGraph("BlockHitStart");
                     const float reduction = mode == BlockMode::kDamageReduction ? blockedFraction(actor, profile, false) : 0.0f;
                     const float damageMultiplier = (1.0f - reduction) * timedBlock.damageMultiplier;
                     hitData.physicalDamage *= damageMultiplier;
@@ -270,12 +272,23 @@ class hooks {
                 return;
             }
 
+            //don't need to double play the blockhit anim
             if (mode == BlockMode::kAnimationOnly) {
-                actor->NotifyAnimationGraph("BlockHitStart");
+                if (!alreadyBlocked) {
+                    actor->NotifyAnimationGraph("BlockHitStart");
+                }
                 return;
             }
 
-            const float reduction = std::clamp(blockedFraction(actor, profile, false), 0.0f, 1.0f);
+            if (!cfg.handleShieldBlockedArrows) {
+                if (cfg.log) {
+                    SKSE::log::info("[processArrowCollision] actor {:08X} already blocked with shield, ignore",
+                        actor ? actor->GetFormID() : 0);
+                }
+                return;
+            }
+
+            const float reduction = std::clamp(blockedFraction(actor, profile, false) * cfg.alreadyBlockedAdditionalEffectiveness, 0.0f, 1.0f);
             
             if (!tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
                 if (cfg.log) {
@@ -289,7 +302,7 @@ class hooks {
             hitData.totalDamage *= 1.0f - reduction;
             hitData.percentBlocked = reduction;
             hitData.flags.set(RE::HitData::Flag::kBlocked, RE::HitData::Flag::kBlockWithWeapon);
-            actor->NotifyAnimationGraph("BlockHitStart");
+            if (!alreadyBlocked) actor->NotifyAnimationGraph("BlockHitStart");
             awardBlockExperience(actor, incomingDamage);
 
             if (attacker) {

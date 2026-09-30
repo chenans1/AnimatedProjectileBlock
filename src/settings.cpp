@@ -100,6 +100,9 @@ namespace settings {
         loaded.log = readBool(ini, general, "log", loaded.log);
         loaded.blockSkillPercentPerLevel = readBlockSkillPercent(ini, general, "blockSkillPercentPerLevel", loaded.blockSkillPercentPerLevel);
 
+        loaded.handleShieldBlockedArrows = readBool(ini, general, "handleShieldBlockedArrows", loaded.handleShieldBlockedArrows);
+        loaded.alreadyBlockedAdditionalEffectiveness = readFactor(ini, general, "alreadyBlockedAdditionalEffectiveness", loaded.alreadyBlockedAdditionalEffectiveness);
+
         loaded.playerWeaponArrowEnabled = readBool(ini, player, "weaponArrowEnabled", loaded.playerWeaponArrowEnabled);
         loaded.playerShieldArrowEnabled = readBool(ini, player, "shieldArrowEnabled", loaded.playerShieldArrowEnabled);
         loaded.playerWeaponArrowDamageReductionEnabled = readBool(ini, player, "weaponArrowDamageReductionEnabled", loaded.playerWeaponArrowDamageReductionEnabled);
@@ -118,6 +121,7 @@ namespace settings {
         loaded.pcShieldMagicFactor = readFactor(ini, player, "shieldMagicFactor", loaded.pcShieldMagicFactor);
         loaded.pcProjectileBlockExpMult = readCostFactor(ini, player, "projectileBlockExpMult", loaded.pcProjectileBlockExpMult);
         loaded.pcArrowBlockCostFactor = readCostFactor(ini, player, "arrowBlockCostFactor", loaded.pcArrowBlockCostFactor);
+
         loaded.pcWeaponSpellStaminaCost = readSpellCost(ini, player, "weaponSpellStaminaCost", loaded.pcWeaponSpellStaminaCost);
         loaded.pcShieldSpellStaminaCost = readSpellCost(ini, player, "shieldSpellStaminaCost", loaded.pcShieldSpellStaminaCost);
         loaded.pcWeaponSpellMagickaCost = readSpellCost(ini, player, "weaponSpellMagickaCost", loaded.pcWeaponSpellMagickaCost);
@@ -157,6 +161,9 @@ namespace settings {
 
         writeBool(ini, general, "log", current.log);
         writeFactor(ini, general, "blockSkillPercentPerLevel", current.blockSkillPercentPerLevel);
+        
+        writeBool(ini, general, "handleShieldBlockedArrows", current.handleShieldBlockedArrows);
+        writeFactor(ini, general, "alreadyBlockedAdditionalEffectiveness", current.alreadyBlockedAdditionalEffectiveness);
 
         writeBool(ini, player, "weaponArrowEnabled", current.playerWeaponArrowEnabled);
         writeBool(ini, player, "shieldArrowEnabled", current.playerShieldArrowEnabled);
@@ -239,8 +246,7 @@ namespace settings {
         bool changed = false;
 
         ImGuiMCP::TextUnformatted("Factors multiply calculated block effectiveness (0 = none, 1 = full effectiveness).");
-        changed |= ImGuiMCP::Checkbox("Enable diagnostic logging", &current.log);
-
+        
         ImGuiMCP::Separator();
         ImGuiMCP::TextUnformatted("Player - arrows");
         changed |= drawBlockRow("Weapon arrow block##player", current.playerWeaponArrowEnabled, current.pcWeaponArrowFactor);
@@ -257,6 +263,12 @@ namespace settings {
         ImGuiMCP::TextUnformatted("NPCs - spells");
         changed |= drawBlockRow("Weapon spell block##npc", current.NPCWeaponMagicEnabled, current.NPCWeaponMagicFactor);
         changed |= drawBlockRow("Shield spell block##npc", current.NPCShieldMagicEnabled, current.NPCShieldMagicFactor);
+
+        ImGuiMCP::Separator();
+        changed |= ImGuiMCP::Checkbox("Apply block effectiveness and cost to arrows shields have already blocked", &current.handleShieldBlockedArrows);
+        changed |= ImGuiMCP::SliderFloat("Additional Block effectiveness for already blocked arrows", &current.alreadyBlockedAdditionalEffectiveness, 0.0f, 1.0f, "%.2f");
+        changed |= ImGuiMCP::Checkbox("Enable diagnostic logging", &current.log);
+
 
         FinishMenuPage(current, changed);
     }
