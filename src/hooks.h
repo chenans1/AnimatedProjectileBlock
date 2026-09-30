@@ -119,7 +119,12 @@ class hooks {
             RE::ObjectRefHandle target;
             RE::MagicItem* spell;
             float remainingDamage;
-            // bool shield;
+            bool convertRemainingDamage = false;
+            float remainingDamageConversionPortion = 0.0f;
+            float staminaCost = 0.0f;
+            float magickaCost = 0.0f;
+            bool conversionEvaluated = false;
+            bool healthDamageConverted = false;
         };
 
         struct HitScope {
@@ -249,12 +254,15 @@ class hooks {
                     awardBlockExperience(actor, incomingDamage);
                     stbl->TriggerTimedBlock(request);
                     
+                    SKSE::log::info("[processArrowCollision] timed block: target={:08X} convertRemainingDamage={}", actor->GetFormID(), timedBlock.convertRemainingDamage);
                     if (timedBlock.convertRemainingDamage) {
                         auto* actorAV = actor->AsActorValueOwner();
                         float stamina = actorAV->GetActorValue(RE::ActorValue::kStamina);
                         if (stamina >= (hitData.totalDamage * timedBlock.remainingDamageConversionPortion)) {
                             actorAV->DamageActorValue(RE::ActorValue::kStamina, (hitData.totalDamage * timedBlock.remainingDamageConversionPortion));
+                            hitData.totalDamage = 0.0f;
                         }
+                        
                     }
 
                     if (cfg.log) {
@@ -375,7 +383,15 @@ class hooks {
                                     }
                                     //always damage reduction, but not always return the simple timed block event to avoid spam - only if blockhit
                                     const float reduction = mode == BlockMode::kDamageReduction ? blockedFraction(actor, profile, false) : 0.0f;
-                                    hit = Hit{target->GetHandle(), spell, (1.0f - reduction) * (isTimedBlocking.damageMultiplier)};
+                                    hit = Hit{
+                                        target->GetHandle(),
+                                        spell,
+                                        (1.0f - reduction) * isTimedBlocking.damageMultiplier,
+                                        isTimedBlocking.convertRemainingDamage,
+                                        isTimedBlocking.remainingDamageConversionPortion,
+                                        costs.stamina,
+                                        costs.magicka
+                                    };
                                     if (playSpellBlockAnimation(actor, flame)){
                                         //block experience should work - it's always being called anyways, and with stbl it overwrites the damage reduction.
                                         stbl->TriggerTimedBlock(request);
@@ -481,8 +497,39 @@ class hooks {
                 return;
             }
 
+            const bool healthDamage = effect->IsCausingHealthDamage() ||
+                (baseEffect && baseEffect->IsDetrimental() &&
+                    (baseEffect->data.primaryAV == RE::ActorValue::kHealth || baseEffect->data.secondaryAV == RE::ActorValue::kHealth));
+            if (healthDamage && currentHit->convertRemainingDamage && !currentHit->conversionEvaluated) {
+                currentHit->conversionEvaluated = true;
+                const float portion = std::clamp(currentHit->remainingDamageConversionPortion, 0.0f, 1.0f);
+                const float totalBaseCost = currentHit->staminaCost + currentHit->magickaCost;
+                if (std::isfinite(totalBaseCost) && totalBaseCost > 0.0f && std::isfinite(portion)) {
+                    const float staminaShare = currentHit->staminaCost / totalBaseCost;
+                    const float magickaShare = currentHit->magickaCost / totalBaseCost;
+                    const float convertedCost = totalBaseCost * portion;
+                    const float staminaConversionCost = convertedCost * staminaShare;
+                    const float magickaConversionCost = convertedCost * magickaShare;
+                    currentHit->healthDamageConverted = tryConsumeSpellBlockResources(victimRef->As<RE::Actor>(), staminaConversionCost, magickaConversionCost);
+
+                    if (settings::Get().log) {
+                        SKSE::log::info("[SetEffectiveness] spell damage conversion {}: target={:08X} spell={:08X} staminaCost={} magickaCost={} portion={}",
+                            currentHit->healthDamageConverted ? "paid" : "insufficient resources",
+                            victimRef->GetFormID(),
+                            currentHit->spell ? currentHit->spell->GetFormID() : 0,
+                            staminaConversionCost,
+                            magickaConversionCost,
+                            portion);
+                    }
+                }
+            }
+
             const float oldMagnitude = effect->magnitude;
-            effect->magnitude *= currentHit->remainingDamage;
+            if (healthDamage && currentHit->healthDamageConverted) {
+                effect->magnitude = 0.0f;
+            } else {
+                effect->magnitude *= currentHit->remainingDamage;
+            }
             if (auto* victim = victimRef->As<RE::Actor>()) {
                 awardBlockExperience(victim, oldMagnitude);
             }
