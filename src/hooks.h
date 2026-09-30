@@ -11,17 +11,22 @@ class hooks {
     //logic adapted from valhalla combat, hooks adapted from arrowInterpreter. 
     public: 
         static inline void install() {
-            SKSE::log::info("[hooks] attempting hooking projectile addimpact functions");
-            {
-                REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_ArrowProjectile[0]};
-                _originalArrow = vtable.write_vfunc(0xBD, AddImpactProj);
-            }
+            // SKSE::log::info("[hooks] attempting hooking projectile addimpact functions");
+            // {
+            //     REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_ArrowProjectile[0]};
+            //     _originalArrow = vtable.write_vfunc(0xBD, AddImpactProj);
+            // }
 
             SKSE::log::info("[hooks] attempting hooking projectile ApplyProjectileSpell");
 
             auto& trampoline = SKSE::GetTrampoline();
             originalApply = trampoline.write_call<5>(REL::RelocationID(43015, 44206).address() + REL::Relocate(0x216, 0x218), ApplyProjectileSpell);
             SKSE::log::info("[Hooks] originalApply at address: 0x{:X}", originalApply.address());
+
+            {   
+			    _ProcessHit = trampoline.write_call<5>(REL::RelocationID(37673, 38627).address() + REL::Relocate(0x3C0, 0x4A8), processHit);
+            }
+
             SKSE::log::info("[hooks] Finished hooks");
         }
 
@@ -204,104 +209,106 @@ class hooks {
         static bool reflectArrow(RE::Actor* blocker, RE::Actor* target, RE::TESAmmo* ammo, RE::TESObjectWEAP* weapon);
         static bool reflectSpell(RE::Actor* blocker, RE::Actor* target, RE::SpellItem* a_spell);
 
-        static void processArrowCollision(RE::Projectile* a_projectile, RE::TESObjectREFR* a_ref) { 
-            // SKSE::log::info("[processProjCollision]");
-            if (!a_projectile || !a_ref) {
+        static void processArrowCollision(RE::ArrowProjectile* projectile, RE::Actor* actor, RE::HitData& hitData) {
+            if (!projectile || !actor) {
                 return;
             }
-            if (a_ref->formType == RE::FormType::ActorCharacter) {
-                auto* actor = a_ref->As<RE::Actor>();
-                if (!actor) {
-                    return;
-                }
-                const auto cfg = settings::Get();
-                const auto profile = getBlockProfile(actor, false, cfg);
-                if (!actor->IsBlocking() || !checkBlockAngle(actor, a_projectile)) {
-                    return;
-                }
-                auto& rd = a_projectile->GetProjectileRuntimeData();
-                auto* attackerRef = rd.shooter.get().get();
-                auto* attacker = attackerRef ? attackerRef->As<RE::Actor>() : nullptr;
-                const auto mode = getBlockMode(actor, profile, arrowDamageReductionEnabled(actor, profile, cfg));
-                const float incomingDamage = rd.weaponDamage;
-                float staminaCost = 0.0f;
-                //stbl integration, for overcap timed block. For undercap timed block damage reduction api is not needed - i will consider hit data modification some day for native compat?
-                if (stbl && actor->IsPlayerRef()) {
-                    const STBL_API::TimedBlockRequest request{STBL_API::AttackType::Arrow, attacker, actor};
-                    const auto isTimedBlocking = stbl->CanTimedBlock(request);
-                    const float reflectionMult = isTimedBlocking.reflectionCostMultiplier;
-                    // if (isTimedBlocking.outcome != STBL_API::TimedBlockOutcome::NotTriggered) {
-                    if (isTimedBlocking.Triggered()) {
-                        if (tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
-                            if (cfg.log) {
-                                SKSE::log::info("[processArrowCollision] arrow timed block success");
-                            }
-                            actor->NotifyAnimationGraph("BlockHitStart");
-                            //we accept 0 reduction here. in this case purely timed block DR from STBL applies
-                            const float reduction = mode == BlockMode::kDamageReduction ? blockedFraction(actor, profile, false) : 0.0f;
-                            rd.weaponDamage = incomingDamage * (1.0f - reduction) * (isTimedBlocking.damageMultiplier);
-                            awardBlockExperience(actor, incomingDamage);
-                            stbl->TriggerTimedBlock(request);
-                            if (attacker) {
-                                castContextSpell(actor, attacker, ArrowBlockerSpell);
-                                castContextSpell(attacker, actor, ArrowAttackerSpell);
-                                sendBlockModEvent(actor, attacker, false);
-                                //handle projectile reflection here
-                                if (isTimedBlocking.ShouldReflect()) {
-                                    float reflectionCost = staminaCost * reflectionMult;
-                                    if (tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, reflectionCost)) {
-                                        if (cfg.log) {
-                                            SKSE::log::info("[processArrowCollision] attempting arrow reflection");
-                                        }
-                                        reflectArrow(actor, attacker, rd.ammoSource, rd.weaponSource);
-                                    }
+            const auto cfg = settings::Get();
+            const auto profile = getBlockProfile(actor, false, cfg);
+            if (!actor->IsBlocking() || !checkBlockAngle(actor, projectile)) {
+                return;
+            }
+
+            auto& projectileData = projectile->GetProjectileRuntimeData();
+            auto* attackerRef = hitData.aggressor ? hitData.aggressor.get().get() : nullptr;
+            auto* attacker = attackerRef ? attackerRef->As<RE::Actor>() : nullptr;
+            const auto mode = getBlockMode(actor, profile, arrowDamageReductionEnabled(actor, profile, cfg));
+
+            const float incomingDamage = hitData.physicalDamage;
+            const float incomingTotalDamage = hitData.totalDamage;
+            float staminaCost = 0.0f;
+
+            if (stbl && actor->IsPlayerRef()) {
+                const STBL_API::TimedBlockRequest request{STBL_API::AttackType::Arrow, attacker, actor};
+                const auto timedBlock = stbl->CanTimedBlock(request);
+                if (timedBlock.Triggered() && tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
+                    actor->NotifyAnimationGraph("BlockHitStart");
+                    const float reduction = mode == BlockMode::kDamageReduction ? blockedFraction(actor, profile, false) : 0.0f;
+                    const float damageMultiplier = (1.0f - reduction) * timedBlock.damageMultiplier;
+                    hitData.physicalDamage *= damageMultiplier;
+                    hitData.totalDamage *= damageMultiplier;
+                    hitData.percentBlocked = 1.0f;
+                    hitData.stagger = 0.0f;
+                    hitData.flags.set(RE::HitData::Flag::kBlocked, RE::HitData::Flag::kBlockWithWeapon);
+                    awardBlockExperience(actor, incomingDamage);
+                    stbl->TriggerTimedBlock(request);
+                    
+                    if (cfg.log) {
+                        SKSE::log::info("[processArrowCollision] timed block: target={} reduction={} timedMultiplier={} staminaCost={} physicalDamage={}->{} totalDamage={}->{} percentBlocked={} stagger={}",
+                            static_cast<void*>(actor), reduction, timedBlock.damageMultiplier, staminaCost, incomingDamage, hitData.physicalDamage,
+                            incomingTotalDamage, hitData.totalDamage, hitData.percentBlocked, hitData.stagger);
+                    }
+                    if (attacker) {
+                        castContextSpell(actor, attacker, ArrowBlockerSpell);
+                        castContextSpell(attacker, actor, ArrowAttackerSpell);
+                        sendBlockModEvent(actor, attacker, false);
+                        if (timedBlock.ShouldReflect()) {
+                            float reflectionCost = staminaCost * timedBlock.reflectionCostMultiplier;
+                            if (tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, reflectionCost)) {
+                                if (cfg.log) {
+                                    SKSE::log::info("[processArrowCollision] attempting arrow reflection");
                                 }
+                                reflectArrow(actor, attacker, projectileData.ammoSource, projectileData.weaponSource);
                             }
-                            return;
                         }
                     }
+                    return;
                 }
+            }
 
-                if (mode == BlockMode::kDisabled) {
-                    return;
-                }
-                if (mode == BlockMode::kAnimationOnly) {
-                    actor->NotifyAnimationGraph("BlockHitStart");
-                    return;
-                }
-                const float reduction = blockedFraction(actor, profile, false);
-                if (reduction <= 0.0f) {
-                    return;
-                }
+            if (mode == BlockMode::kDisabled) {
+                return;
+            }
 
-                if (!tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
-                    if (cfg.log) {
-                        SKSE::log::info("[processArrowCollision] arrow block failed: target={} stamina={} required={}",
-                            static_cast<void*>(actor), actor->GetActorValue(RE::ActorValue::kStamina), staminaCost);
-                    }
-                    return;
-                }
-
+            if (mode == BlockMode::kAnimationOnly) {
                 actor->NotifyAnimationGraph("BlockHitStart");
-                rd.weaponDamage = incomingDamage * (1.0f - reduction);
-                awardBlockExperience(actor, incomingDamage);
+                return;
+            }
 
-                if (attacker) {
-                    castContextSpell(actor, attacker, ArrowBlockerSpell);
-                    castContextSpell(attacker, actor, ArrowAttackerSpell);
-                    sendBlockModEvent(actor, attacker, false);
-                }
+            const float reduction = std::clamp(blockedFraction(actor, profile, false), 0.0f, 1.0f);
+            
+            if (!tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
                 if (cfg.log) {
-                    SKSE::log::info("[processArrowCollision] projectile={} target={} reduction={} staminaCost={} remainingWeaponDamage={}",
-                        static_cast<void*>(a_projectile), static_cast<void*>(a_ref), reduction, staminaCost, rd.weaponDamage);
+                    SKSE::log::info("[processArrowCollision] arrow block failed: target={} stamina={} required={}",
+                        static_cast<void*>(actor), actor->GetActorValue(RE::ActorValue::kStamina), staminaCost);
                 }
+                return;
+            }
+
+            hitData.physicalDamage *= 1.0f - reduction;
+            hitData.totalDamage *= 1.0f - reduction;
+            hitData.percentBlocked = reduction;
+            hitData.flags.set(RE::HitData::Flag::kBlocked, RE::HitData::Flag::kBlockWithWeapon);
+            actor->NotifyAnimationGraph("BlockHitStart");
+            awardBlockExperience(actor, incomingDamage);
+
+            if (attacker) {
+                castContextSpell(actor, attacker, ArrowBlockerSpell);
+                castContextSpell(attacker, actor, ArrowAttackerSpell);
+                sendBlockModEvent(actor, attacker, false);
+            }
+
+            if (cfg.log) {
+                SKSE::log::info("[processArrowCollision] arrow block: target={} reduction={} staminaCost={} physicalDamage={}->{} totalDamage={}->{} percentBlocked={}",
+                    static_cast<void*>(actor), reduction, staminaCost, incomingDamage, hitData.physicalDamage, incomingTotalDamage, hitData.totalDamage,
+                    hitData.percentBlocked);
             }
         }
 
         //need to hook specific vtable funcs, hooking the base vfunc doesnt work.
         static RE::Projectile::ImpactData* AddImpactProj(RE::ArrowProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
             // SKSE::log::info("[AddImpactProj]");
-            processArrowCollision(a_projectile, a_ref);
+            // processArrowCollision(a_projectile, a_ref);
             return _originalArrow(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
         }
 
@@ -394,7 +401,6 @@ class hooks {
                                 }
                             }
                         }
-                        
                     }
                 }
             }
@@ -457,6 +463,18 @@ class hooks {
             }
 
         }
+
+        //projectile hit data appears here - instead directly set the blocked mult
+        static void processHit(RE::Actor* actor, RE::HitData& hitData) {
+            auto* source = hitData.sourceRef ? hitData.sourceRef.get().get() : nullptr;
+            auto* arrow = source ? source->As<RE::ArrowProjectile>() : nullptr;
+            if (actor && arrow && actor->formType == RE::FormType::ActorCharacter) {
+                processArrowCollision(arrow, actor, hitData);
+            }
+            _ProcessHit(actor, hitData);
+        }
+
         static inline REL::Relocation<decltype(ApplyProjectileSpell)> originalApply;
         static inline REL::Relocation<decltype(SetEffectiveness)> originalSetEffectiveness;
+        static inline REL::Relocation<decltype(processHit)> _ProcessHit;
 };
