@@ -5,7 +5,7 @@ cmake_minimum_required (VERSION 3.19)
 # Set your project name. This will be the name of your SKSE .dll file.
 project(zAnimatedProjectileBlock VERSION 0.0.1 LANGUAGES CXX)
 
-set(OUTPUT_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}/output")
+set(OUTPUT_FOLDER "D:/Skyrim SE MO2/mods/animated projectile block")
 
 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ENABLE_SKYRIM_VR OFF CACHE BOOL "" FORCE)

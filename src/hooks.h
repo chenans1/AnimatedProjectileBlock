@@ -11,20 +11,22 @@ class hooks {
     //logic adapted from valhalla combat, hooks adapted from arrowInterpreter. 
     public: 
         static inline void install() {
-            SKSE::log::info("[hooks] attempting hooking projectile addimpact functions");
-            {
-                REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_ArrowProjectile[0]};
-                _originalArrow = vtable.write_vfunc(0xBD, AddImpactProj);
-            }
+            // SKSE::log::info("[hooks] attempting hooking projectile addimpact functions");
+            // {
+            //     REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_ArrowProjectile[0]};
+            //     _originalArrow = vtable.write_vfunc(0xBD, AddImpactProj);
+            // }
 
             SKSE::log::info("[hooks] attempting hooking projectile ApplyProjectileSpell");
 
             auto& trampoline = SKSE::GetTrampoline();
-            // originalApply = trampoline.write_call<5>(REL::RelocationID(42943, 44123).address() + REL::Relocate(0x31C, 0x312), ApplyProjectileSpell); probably fired off for arrow enchantments
-            // originalApply = trampoline.write_call<5>(REL::Relocation<std::uintptr_t>{ REL::Offset(0x7EC608) }.address(), ApplyProjectileSpell); hard coded ae address of working call 
             originalApply = trampoline.write_call<5>(REL::RelocationID(43015, 44206).address() + REL::Relocate(0x216, 0x218), ApplyProjectileSpell);
             SKSE::log::info("[Hooks] originalApply at address: 0x{:X}", originalApply.address());
-            // projectileHooksInstalled = true;
+
+            {   
+			    _ProcessHit = trampoline.write_call<5>(REL::RelocationID(37673, 38627).address() + REL::Relocate(0x3C0, 0x4A8), processHit);
+            }
+
             SKSE::log::info("[hooks] Finished hooks");
         }
 
@@ -50,10 +52,11 @@ class hooks {
             cooldownEffect = dataHandler->LookupForm<RE::EffectSetting>(0x800, "AnimatedProjectileBlocking.esp");
 
             if (!cooldownSpell || !cooldownEffect) {
-                SKSE::log::error("Failed to load enchant cooldown forms: spell={}, effect={}", static_cast<void*>(cooldownSpell), static_cast<void*>(cooldownEffect));
+                SKSE::log::error("Failed to load enchant cooldown forms: spell={:08X}, effect={:08X}",
+                    cooldownSpell ? cooldownSpell->GetFormID() : 0, cooldownEffect ? cooldownEffect->GetFormID() : 0);
                 return false;
             }
-            SKSE::log::info("Sucessfully loaded enchant cd forms: spell={}, effect={}", static_cast<void*>(cooldownSpell), static_cast<void*>(cooldownEffect));
+            SKSE::log::info("Sucessfully loaded enchant cd forms: spell={:08X}, effect={:08X}", cooldownSpell->GetFormID(), cooldownEffect->GetFormID());
             
             ArrowBlockerSpell = dataHandler->LookupForm<RE::SpellItem>(0x803, "AnimatedProjectileBlocking.esp");
             ArrowAttackerSpell = dataHandler->LookupForm<RE::SpellItem>(0x805, "AnimatedProjectileBlocking.esp");
@@ -61,13 +64,16 @@ class hooks {
             SpellAttackerSpell = dataHandler->LookupForm<RE::SpellItem>(0x809, "AnimatedProjectileBlocking.esp");
 
             if (!ArrowBlockerSpell || !ArrowAttackerSpell || !SpellBlockerSpell || !SpellAttackerSpell) {
-                SKSE::log::error("Failed to load attacker/blocker spell forms: ArrowBlockerSpell={}, ArrowAttackerSpell={}, SpellBlockerSpell={}, SpellAttackerSpell={}", 
-                    static_cast<void*>(ArrowBlockerSpell), static_cast<void*>(ArrowAttackerSpell), static_cast<void*>(SpellBlockerSpell), static_cast<void*>(SpellAttackerSpell));
+                SKSE::log::error("Failed to load attacker/blocker spell forms: ArrowBlockerSpell={:08X}, ArrowAttackerSpell={:08X}, SpellBlockerSpell={:08X}, SpellAttackerSpell={:08X}",
+                    ArrowBlockerSpell ? ArrowBlockerSpell->GetFormID() : 0,
+                    ArrowAttackerSpell ? ArrowAttackerSpell->GetFormID() : 0,
+                    SpellBlockerSpell ? SpellBlockerSpell->GetFormID() : 0,
+                    SpellAttackerSpell ? SpellAttackerSpell->GetFormID() : 0);
                 return false;
             }
 
-            SKSE::log::info("Successfully loaded arrow/spell attacker/blocker spell forms: ArrowBlockerSpell={}, ArrowAttackerSpell={}, SpellBlockerSpell={}, SpellAttackerSpell={}", 
-                    static_cast<void*>(ArrowBlockerSpell), static_cast<void*>(ArrowAttackerSpell), static_cast<void*>(SpellBlockerSpell), static_cast<void*>(SpellAttackerSpell));
+            SKSE::log::info("Successfully loaded arrow/spell attacker/blocker spell forms: ArrowBlockerSpell={:08X}, ArrowAttackerSpell={:08X}, SpellBlockerSpell={:08X}, SpellAttackerSpell={:08X}",
+                ArrowBlockerSpell->GetFormID(), ArrowAttackerSpell->GetFormID(), SpellBlockerSpell->GetFormID(), SpellAttackerSpell->GetFormID());
 
             const auto cfg = settings::Get();
             playerWeaponArrowPerk = loadPerkRequirement(cfg.playerWeaponArrowPerkRequirement, "weapon arrow");
@@ -113,7 +119,12 @@ class hooks {
             RE::ObjectRefHandle target;
             RE::MagicItem* spell;
             float remainingDamage;
-            // bool shield;
+            bool convertRemainingDamage = false;
+            float remainingDamageConversionPortion = 0.0f;
+            float staminaCost = 0.0f;
+            float magickaCost = 0.0f;
+            bool conversionEvaluated = false;
+            bool healthDamageConverted = false;
         };
 
         struct HitScope {
@@ -128,6 +139,24 @@ class hooks {
         };
 
         static inline thread_local std::optional<Hit> currentHit;
+
+        // The AE getter checks this per-ActiveEffect bit before returning its
+        // MGEF hit shader. CommonLib does not currently name the bit.
+        static constexpr auto noHitShaderFlag = static_cast<RE::ActiveEffect::Flag>(1u << 1);
+
+        static void suppressHitShader(RE::ActiveEffect* effect) {
+            if (!effect) {
+                return;
+            }
+
+            auto* baseEffect = effect->GetBaseObject();
+            if (!baseEffect || !baseEffect->data.effectShader ||
+                baseEffect->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kNoHitEffect)) {
+                return;
+            }
+
+            effect->flags.set(noHitShaderFlag);
+        }
 
         struct BlockProfile {
             bool enabled;
@@ -189,104 +218,130 @@ class hooks {
         static bool reflectArrow(RE::Actor* blocker, RE::Actor* target, RE::TESAmmo* ammo, RE::TESObjectWEAP* weapon);
         static bool reflectSpell(RE::Actor* blocker, RE::Actor* target, RE::SpellItem* a_spell);
 
-        static void processArrowCollision(RE::Projectile* a_projectile, RE::TESObjectREFR* a_ref) { 
-            // SKSE::log::info("[processProjCollision]");
-            if (!a_projectile || !a_ref) {
+        static void processArrowCollision(RE::ArrowProjectile* projectile, RE::Actor* actor, RE::HitData& hitData) {
+            if (!projectile || !actor) {
                 return;
             }
-            if (a_ref->formType == RE::FormType::ActorCharacter) {
-                auto* actor = a_ref->As<RE::Actor>();
-                if (!actor) {
-                    return;
-                }
-                const auto cfg = settings::Get();
-                const auto profile = getBlockProfile(actor, false, cfg);
-                if (!actor->IsBlocking() || !checkBlockAngle(actor, a_projectile)) {
-                    return;
-                }
-                auto& rd = a_projectile->GetProjectileRuntimeData();
-                auto* attackerRef = rd.shooter.get().get();
-                auto* attacker = attackerRef ? attackerRef->As<RE::Actor>() : nullptr;
-                const auto mode = getBlockMode(actor, profile, arrowDamageReductionEnabled(actor, profile, cfg));
-                const float incomingDamage = rd.weaponDamage;
-                float staminaCost = 0.0f;
-                //stbl integration, for overcap timed block. For undercap timed block damage reduction api is not needed - i will consider hit data modification some day for native compat?
-                if (stbl && actor->IsPlayerRef()) {
-                    const STBL_API::TimedBlockRequest request{STBL_API::AttackType::Arrow, attacker, actor};
-                    const auto isTimedBlocking = stbl->CanTimedBlock(request);
-                    const float reflectionMult = isTimedBlocking.reflectionCostMultiplier;
-                    // if (isTimedBlocking.outcome != STBL_API::TimedBlockOutcome::NotTriggered) {
-                    if (isTimedBlocking.Triggered()) {
-                        if (tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
-                            if (cfg.log) {
-                                SKSE::log::info("[processArrowCollision] arrow timed block success");
-                            }
-                            actor->NotifyAnimationGraph("BlockHitStart");
-                            //we accept 0 reduction here. in this case purely timed block DR from STBL applies
-                            const float reduction = mode == BlockMode::kDamageReduction ? blockedFraction(actor, profile, false) : 0.0f;
-                            rd.weaponDamage = incomingDamage * (1.0f - reduction) * (isTimedBlocking.damageMultiplier);
-                            awardBlockExperience(actor, incomingDamage);
-                            stbl->TriggerTimedBlock(request);
-                            if (attacker) {
-                                castContextSpell(actor, attacker, ArrowBlockerSpell);
-                                castContextSpell(attacker, actor, ArrowAttackerSpell);
-                                sendBlockModEvent(actor, attacker, false);
-                                //handle projectile reflection here
-                                if (isTimedBlocking.ShouldReflect()) {
-                                    float reflectionCost = staminaCost * reflectionMult;
-                                    if (tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, reflectionCost)) {
-                                        if (cfg.log) {
-                                            SKSE::log::info("[processArrowCollision] attempting arrow reflection");
-                                        }
-                                        reflectArrow(actor, attacker, rd.ammoSource, rd.weaponSource);
-                                    }
+            const auto cfg = settings::Get();
+            const auto profile = getBlockProfile(actor, false, cfg);
+            if (!actor->IsBlocking() || !checkBlockAngle(actor, projectile)) {
+                return;
+            }
+
+            auto& projectileData = projectile->GetProjectileRuntimeData();
+            auto* attackerRef = hitData.aggressor ? hitData.aggressor.get().get() : nullptr;
+            auto* attacker = attackerRef ? attackerRef->As<RE::Actor>() : nullptr;
+            const auto mode = getBlockMode(actor, profile, arrowDamageReductionEnabled(actor, profile, cfg));
+
+            const float incomingDamage = hitData.physicalDamage;
+            const float incomingTotalDamage = hitData.totalDamage;
+            float staminaCost = 0.0f;
+
+            const bool alreadyBlocked = hitData.flags.any(RE::HitData::Flag::kBlocked);
+
+            if (stbl && actor->IsPlayerRef()) {
+                const STBL_API::TimedBlockRequest request{STBL_API::AttackType::Arrow, attacker, actor};
+                const auto timedBlock = stbl->CanTimedBlock(request);
+                if (timedBlock.Triggered() && tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
+                    if (!alreadyBlocked) actor->NotifyAnimationGraph("BlockHitStart");
+                    const float reduction = mode == BlockMode::kDamageReduction ? blockedFraction(actor, profile, false) : 0.0f;
+                    const float damageMultiplier = (1.0f - reduction) * timedBlock.damageMultiplier;
+                    hitData.physicalDamage *= damageMultiplier;
+                    hitData.totalDamage *= damageMultiplier;
+                    hitData.percentBlocked = 1.0f;
+                    hitData.stagger = 0.0f;
+                    hitData.flags.set(RE::HitData::Flag::kBlocked, RE::HitData::Flag::kBlockWithWeapon);
+                    awardBlockExperience(actor, incomingDamage);
+                    stbl->TriggerTimedBlock(request);
+                    
+                    SKSE::log::info("[processArrowCollision] timed block: target={:08X} convertRemainingDamage={}", actor->GetFormID(), timedBlock.convertRemainingDamage);
+                    if (timedBlock.convertRemainingDamage) {
+                        auto* actorAV = actor->AsActorValueOwner();
+                        float stamina = actorAV->GetActorValue(RE::ActorValue::kStamina);
+                        if (stamina >= (hitData.totalDamage * timedBlock.remainingDamageConversionPortion)) {
+                            actorAV->DamageActorValue(RE::ActorValue::kStamina, (hitData.totalDamage * timedBlock.remainingDamageConversionPortion));
+                            hitData.totalDamage = 0.0f;
+                        }
+                        
+                    }
+
+                    if (cfg.log) {
+                        SKSE::log::info("[processArrowCollision] timed block: target={:08X} reduction={} timedMultiplier={} staminaCost={} physicalDamage={}->{} totalDamage={}->{} percentBlocked={} stagger={}",
+                            actor->GetFormID(), reduction, timedBlock.damageMultiplier, staminaCost, incomingDamage, hitData.physicalDamage,
+                            incomingTotalDamage, hitData.totalDamage, hitData.percentBlocked, hitData.stagger);
+                    }
+                    if (attacker) {
+                        castContextSpell(actor, attacker, ArrowBlockerSpell);
+                        castContextSpell(attacker, actor, ArrowAttackerSpell);
+                        sendBlockModEvent(actor, attacker, false);
+                        if (timedBlock.ShouldReflect()) {
+                            float reflectionCost = staminaCost * timedBlock.reflectionCostMultiplier;
+                            if (tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, reflectionCost)) {
+                                if (cfg.log) {
+                                    SKSE::log::info("[processArrowCollision] attempting arrow reflection");
                                 }
+                                reflectArrow(actor, attacker, projectileData.ammoSource, projectileData.weaponSource);
                             }
-                            return;
                         }
                     }
-                }
-
-                if (mode == BlockMode::kDisabled) {
                     return;
                 }
-                if (mode == BlockMode::kAnimationOnly) {
+            }
+
+            if (mode == BlockMode::kDisabled) {
+                return;
+            }
+
+            //don't need to double play the blockhit anim
+            if (mode == BlockMode::kAnimationOnly) {
+                if (!alreadyBlocked) {
                     actor->NotifyAnimationGraph("BlockHitStart");
-                    return;
                 }
-                const float reduction = blockedFraction(actor, profile, false);
-                if (reduction <= 0.0f) {
-                    return;
-                }
+                return;
+            }
 
-                if (!tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
-                    if (cfg.log) {
-                        SKSE::log::info("[processArrowCollision] arrow block failed: target={} stamina={} required={}",
-                            static_cast<void*>(actor), actor->GetActorValue(RE::ActorValue::kStamina), staminaCost);
-                    }
-                    return;
-                }
-
-                actor->NotifyAnimationGraph("BlockHitStart");
-                rd.weaponDamage = incomingDamage * (1.0f - reduction);
-                awardBlockExperience(actor, incomingDamage);
-
-                if (attacker) {
-                    castContextSpell(actor, attacker, ArrowBlockerSpell);
-                    castContextSpell(attacker, actor, ArrowAttackerSpell);
-                    sendBlockModEvent(actor, attacker, false);
-                }
+            if (!cfg.handleShieldBlockedArrows) {
                 if (cfg.log) {
-                    SKSE::log::info("[processArrowCollision] projectile={} target={} reduction={} staminaCost={} remainingWeaponDamage={}",
-                        static_cast<void*>(a_projectile), static_cast<void*>(a_ref), reduction, staminaCost, rd.weaponDamage);
+                    SKSE::log::info("[processArrowCollision] actor {:08X} already blocked with shield, ignore",
+                        actor ? actor->GetFormID() : 0);
                 }
+                return;
+            }
+
+            const float reduction = std::clamp(blockedFraction(actor, profile, false) * cfg.alreadyBlockedAdditionalEffectiveness, 0.0f, 1.0f);
+            
+            if (!tryConsumeArrowBlockStamina(actor, incomingDamage, cfg, staminaCost)) {
+                if (cfg.log) {
+                    SKSE::log::info("[processArrowCollision] arrow block failed: target={:08X} stamina={} required={}",
+                        actor->GetFormID(), actor->GetActorValue(RE::ActorValue::kStamina), staminaCost);
+                }
+                return;
+            }
+
+            hitData.physicalDamage *= 1.0f - reduction;
+            hitData.totalDamage *= 1.0f - reduction;
+            hitData.percentBlocked = reduction;
+            hitData.flags.set(RE::HitData::Flag::kBlocked, RE::HitData::Flag::kBlockWithWeapon);
+            if (!alreadyBlocked) actor->NotifyAnimationGraph("BlockHitStart");
+            awardBlockExperience(actor, incomingDamage);
+
+            if (attacker) {
+                castContextSpell(actor, attacker, ArrowBlockerSpell);
+                castContextSpell(attacker, actor, ArrowAttackerSpell);
+                sendBlockModEvent(actor, attacker, false);
+            }
+
+            if (cfg.log) {
+                SKSE::log::info("[processArrowCollision] arrow block: target={:08X} reduction={} staminaCost={} physicalDamage={}->{} totalDamage={}->{} percentBlocked={}",
+                    actor->GetFormID(), reduction, staminaCost, incomingDamage, hitData.physicalDamage, incomingTotalDamage, hitData.totalDamage,
+                    hitData.percentBlocked);
             }
         }
 
         //need to hook specific vtable funcs, hooking the base vfunc doesnt work.
         static RE::Projectile::ImpactData* AddImpactProj(RE::ArrowProjectile* a_projectile, RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_targetLoc, const RE::NiPoint3& a_velocity, RE::hkpCollidable* a_collidable, std::int32_t a_arg6, std::uint32_t a_arg7) {
             // SKSE::log::info("[AddImpactProj]");
-            processArrowCollision(a_projectile, a_ref);
+            // processArrowCollision(a_projectile, a_ref);
             return _originalArrow(a_projectile, a_ref, a_targetLoc, a_velocity, a_collidable, a_arg6, a_arg7);
         }
 
@@ -295,7 +350,6 @@ class hooks {
         //it turns out this function - which applies the spell effects from projectile collision - actually runs before the addimpact() for projectiles, super convenient
         //it also turns out in the same synchronous call, setEffectiveness is called. 
         static void ApplyProjectileSpell(RE::MagicCaster* caster, const RE::NiPoint3* impactPos, RE::Projectile* projectile, RE::TESObjectREFR* target, float arg5, float arg6, std::uint8_t arg7, std::uint8_t arg8) {
-            // SKSE::log::info("[ApplyProjectileSpell] ENTER: projectile={} target={} blocked={}", static_cast<void*>(projectile), static_cast<void*>(target), currentHit.has_value());
             std::optional<Hit> hit;
             if (projectile && target) {
                 if (auto* actor = target->As<RE::Actor>()) {
@@ -329,7 +383,15 @@ class hooks {
                                     }
                                     //always damage reduction, but not always return the simple timed block event to avoid spam - only if blockhit
                                     const float reduction = mode == BlockMode::kDamageReduction ? blockedFraction(actor, profile, false) : 0.0f;
-                                    hit = Hit{target->GetHandle(), spell, (1.0f - reduction) * (isTimedBlocking.damageMultiplier)};
+                                    hit = Hit{
+                                        target->GetHandle(),
+                                        spell,
+                                        (1.0f - reduction) * isTimedBlocking.damageMultiplier,
+                                        isTimedBlocking.convertRemainingDamage,
+                                        isTimedBlocking.remainingDamageConversionPortion,
+                                        costs.stamina,
+                                        costs.magicka
+                                    };
                                     if (playSpellBlockAnimation(actor, flame)){
                                         //block experience should work - it's always being called anyways, and with stbl it overwrites the damage reduction.
                                         stbl->TriggerTimedBlock(request);
@@ -365,8 +427,8 @@ class hooks {
                             if (reduction > 0.0f) {
                                 const bool paid = tryConsumeSpellBlockResources(actor, costs.stamina, costs.magicka);
                                 if (cfg.log && (!flame || !paid)) {
-                                    SKSE::log::info("[ApplyProjectileSpell] spell block {}: target={} staminaCost={} magickaCost={}",
-                                        paid ? "paid" : "failed", static_cast<void*>(actor), costs.stamina, costs.magicka);
+                                    SKSE::log::info("[ApplyProjectileSpell] spell block {}: target={:08X} staminaCost={} magickaCost={}",
+                                        paid ? "paid" : "failed", actor->GetFormID(), costs.stamina, costs.magicka);
                                 }
                                 if (paid) {
                                     hit = Hit{target->GetHandle(), spell, 1.0f - reduction};
@@ -380,37 +442,24 @@ class hooks {
                                 }
                             }
                         }
-                        
                     }
                 }
             }
             HitScope scope(std::move(hit));
             originalApply(caster, impactPos, projectile, target, arg5, arg6, arg7, arg8);
-            // SKSE::log::info("[ApplyProjectileSpell] EXIT: projectile={} target={} blocked={}", static_cast<void*>(projectile), static_cast<void*>(target), currentHit.has_value());
         }
-
+        
         static void SetEffectiveness(RE::ActiveEffect* effect, float power, bool onlyHostile) {
             originalSetEffectiveness(effect, power, onlyHostile);
             if (!currentHit || !effect) {
-                // SKSE::log::info("[SetEffectiveness] No currentHit");
                 return;
             }
             // Must belong to the spell from the blocked projectile.
             if (effect->spell != currentHit->spell) {
                 if (settings::Get().log) {
-                    SKSE::log::info("[SetEffectiveness] effect spell: {} is not currenthit spell: {}", static_cast<void*>(effect->spell), static_cast<void*>(currentHit->spell));
-                }
-                return;
-            }
-            //only affect damage to H/M/S
-            const auto* baseEffect = effect->GetBaseObject();
-            constexpr auto isVitalActorValue = [](RE::ActorValue value) {
-                return value == RE::ActorValue::kHealth || value == RE::ActorValue::kStamina || value == RE::ActorValue::kMagicka;
-            };
-            const bool damageHMS = effect->IsCausingHealthDamage() || (baseEffect && baseEffect->IsDetrimental() && (isVitalActorValue(baseEffect->data.primaryAV) || isVitalActorValue(baseEffect->data.secondaryAV)));
-            if (!damageHMS) {
-                if (settings::Get().log) {
-                    SKSE::log::info("[SetEffectiveness] effect does not damage Health, Stamina or Magicka");
+                    SKSE::log::info("[SetEffectiveness] effect spell {:08X} is not current hit spell {:08X}",
+                        effect->spell ? effect->spell->GetFormID() : 0,
+                        currentHit->spell ? currentHit->spell->GetFormID() : 0);
                 }
                 return;
             }
@@ -425,21 +474,84 @@ class hooks {
             const auto victimHandle = victimRef->GetHandle();
             if (victimHandle != currentHit->target) {
                 if (settings::Get().log) {
-                    SKSE::log::info("[SetEffectiveness] target mismatch: effect target {:08X} (handle {:08X}), impact handle {:08X}", victimRef->GetFormID(), victimHandle.native_handle(), currentHit->target.native_handle());
+                    auto* impactTarget = currentHit->target ? currentHit->target.get().get() : nullptr;
+                    SKSE::log::info("[SetEffectiveness] target mismatch: effect target={:08X}, impact target={:08X}",
+                        victimRef->GetFormID(), impactTarget ? impactTarget->GetFormID() : 0);
                 }
                 return;
             }
+
+            suppressHitShader(effect);
+
+            // Only damage to Health, Magicka, or Stamina is reduced. Shader
+            // suppression above applies to every effect from the blocked spell.
+            const auto* baseEffect = effect->GetBaseObject();
+            constexpr auto isVitalActorValue = [](RE::ActorValue value) {
+                return value == RE::ActorValue::kHealth || value == RE::ActorValue::kStamina || value == RE::ActorValue::kMagicka;
+            };
+            const bool damageHMS = effect->IsCausingHealthDamage() || (baseEffect && baseEffect->IsDetrimental() && (isVitalActorValue(baseEffect->data.primaryAV) || isVitalActorValue(baseEffect->data.secondaryAV)));
+            if (!damageHMS) {
+                if (settings::Get().log) {
+                    SKSE::log::info("[SetEffectiveness] effect does not damage Health, Stamina or Magicka");
+                }
+                return;
+            }
+
+            const bool healthDamage = effect->IsCausingHealthDamage() ||
+                (baseEffect && baseEffect->IsDetrimental() &&
+                    (baseEffect->data.primaryAV == RE::ActorValue::kHealth || baseEffect->data.secondaryAV == RE::ActorValue::kHealth));
+            if (healthDamage && currentHit->convertRemainingDamage && !currentHit->conversionEvaluated) {
+                currentHit->conversionEvaluated = true;
+                const float portion = std::clamp(currentHit->remainingDamageConversionPortion, 0.0f, 1.0f);
+                const float totalBaseCost = currentHit->staminaCost + currentHit->magickaCost;
+                if (std::isfinite(totalBaseCost) && totalBaseCost > 0.0f && std::isfinite(portion)) {
+                    const float staminaShare = currentHit->staminaCost / totalBaseCost;
+                    const float magickaShare = currentHit->magickaCost / totalBaseCost;
+                    const float convertedCost = totalBaseCost * portion;
+                    const float staminaConversionCost = convertedCost * staminaShare;
+                    const float magickaConversionCost = convertedCost * magickaShare;
+                    currentHit->healthDamageConverted = tryConsumeSpellBlockResources(victimRef->As<RE::Actor>(), staminaConversionCost, magickaConversionCost);
+
+                    if (settings::Get().log) {
+                        SKSE::log::info("[SetEffectiveness] spell damage conversion {}: target={:08X} spell={:08X} staminaCost={} magickaCost={} portion={}",
+                            currentHit->healthDamageConverted ? "paid" : "insufficient resources",
+                            victimRef->GetFormID(),
+                            currentHit->spell ? currentHit->spell->GetFormID() : 0,
+                            staminaConversionCost,
+                            magickaConversionCost,
+                            portion);
+                    }
+                }
+            }
+
             const float oldMagnitude = effect->magnitude;
-            effect->magnitude *= currentHit->remainingDamage;
+            if (healthDamage && currentHit->healthDamageConverted) {
+                effect->magnitude = 0.0f;
+            } else {
+                effect->magnitude *= currentHit->remainingDamage;
+            }
             if (auto* victim = victimRef->As<RE::Actor>()) {
                 awardBlockExperience(victim, oldMagnitude);
             }
 
             if (settings::Get().log) {
-                SKSE::log::info("[SetEffectiveness] blocked spell effect={} magnitude {} -> {}", static_cast<void*>(effect), oldMagnitude, effect->magnitude);
+                SKSE::log::info("[SetEffectiveness] blocked spell effect={:08X} magnitude {} -> {}",
+                    effect->spell ? effect->spell->GetFormID() : 0, oldMagnitude, effect->magnitude);
             }
 
         }
+
+        //projectile hit data appears here - instead directly set the blocked mult
+        static void processHit(RE::Actor* actor, RE::HitData& hitData) {
+            auto* source = hitData.sourceRef ? hitData.sourceRef.get().get() : nullptr;
+            auto* arrow = source ? source->As<RE::ArrowProjectile>() : nullptr;
+            if (actor && arrow && actor->formType == RE::FormType::ActorCharacter) {
+                processArrowCollision(arrow, actor, hitData);
+            }
+            _ProcessHit(actor, hitData);
+        }
+
         static inline REL::Relocation<decltype(ApplyProjectileSpell)> originalApply;
         static inline REL::Relocation<decltype(SetEffectiveness)> originalSetEffectiveness;
+        static inline REL::Relocation<decltype(processHit)> _ProcessHit;
 };

@@ -240,9 +240,11 @@ void hooks::castContextSpell(RE::Actor* a_caster, RE::Actor* a_target, RE::Spell
     }
     if (auto* caster = a_caster->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant)) {
         caster->CastSpellImmediate(a_spell, false, a_target, 1.0f, false, 0.0f, a_caster);
-        // if (const auto cfg = settings::Get().log) { 
-        //     SKSE::log::info("[castContextSpell]: Cast spell={} on target={} caster={}", 
-        //         static_cast<void*>(a_spell), static_cast<void*>(a_target), static_cast<void*>(a_caster));
+        // if (const auto cfg = settings::Get().log) {
+        //     SKSE::log::info("[castContextSpell]: Cast spell={:08X} on target={:08X} caster={:08X}",
+        //         a_spell ? a_spell->GetFormID() : 0,
+        //         a_target ? a_target->GetFormID() : 0,
+        //         a_caster ? a_caster->GetFormID() : 0);
         // }
     }
 }

@@ -48,7 +48,7 @@ namespace settings {
         // Multiplies the full arrow block stamina cost fStaminaBlockBase + arrow damage x fStaminaBlockDmgMult) x factor.
         float pcArrowBlockCostFactor = 1.0f;
         float NPCArrowBlockCostFactor = 1.0f;
-
+        
         // Flat resource cost per blocked spell impact
         float pcWeaponSpellStaminaCost = 8.0f;
         float pcShieldSpellStaminaCost = 5.0f;
@@ -63,6 +63,10 @@ namespace settings {
         float pcShieldFlameCostMultiplier = 0.05f;
         float NPCWeaponFlameCostMultiplier = 0.1f;
         float NPCShieldFlameCostMultiplier = 0.05f;
+
+        //handle already blocked arrows by shields
+        bool handleShieldBlockedArrows = true;
+        float alreadyBlockedAdditionalEffectiveness = 0.33f;
     };
 
     config Get();

@@ -5,7 +5,9 @@
 CanTimedBlock evaluates the window and damage policy without applying effects.
 TriggerTimedBlock commits effects after a caller completes its own checks.
 TryTriggerTimedBlock is the convenience operation that evaluates and commits.
-External consumers remain responsible for applying the returned damage multiplier.
+Callers apply the returned damageMultiplier to their hit. When
+convertRemainingDamage is true, consumers may convert residual damage using
+remainingDamageConversionPortion.
 */
 namespace RE {
     class Actor;
@@ -43,6 +45,11 @@ namespace STBL_API {
         // Multiplier applied to incoming damage:
         // 1.0 = unchanged, 0.5 = half damage, 0.0 = no damage.
         float damageMultiplier = 1.0f;
+
+        // If enabled, consumers can convert residual damage to resource cost
+        // using this portion of the residual damage as the cost.
+        bool convertRemainingDamage = false;
+        float remainingDamageConversionPortion = 1.0f;
 
         // Additional cost relative to the base block cost. For example, 1.0
         // means reflection costs one additional base cost (2.0x total).
